@@ -450,6 +450,34 @@ def benchmarks_page(wiki: Path, boards: list[dict]) -> None:
         "refreshed on each run — follow the source link for the full board.*",
         "",
     ]
+    # Freshness summary first: which board actually reflects current models is
+    # the question that matters most, and it is not obvious from the tables.
+    today = dt.date.today()
+    summary = []
+    for b in boards:
+        newest = b.get("newest") or ""
+        try:
+            age = (today - dt.date.fromisoformat(newest[:10])).days
+            age_s = f"{age} day{'s' if age != 1 else ''}"
+        except (ValueError, TypeError):
+            age, age_s = None, "—"
+        summary.append((age if age is not None else 10**6, b, newest or "—", age_s))
+    summary.sort(key=lambda x: x[0])
+
+    out += ["## Freshness at a glance", "",
+            "| Board | Newest entry | Age | Status |", "|---|---|---:|---|"]
+    for _, b, newest, age_s in summary:
+        if b.get("error"):
+            status = "❌ unavailable"
+        elif not b.get("newest"):
+            status = "❔ no dates published"
+        elif b.get("stale"):
+            status = "⚠️ out of date"
+        else:
+            status = "✅ current"
+        out.append(f"| [{_esc(b['title'])}](#{_slug(b['title'])}) | {newest} | {age_s} | {status} |")
+    out += [""]
+
     groups: dict[str, list[dict]] = {}
     for b in boards:
         groups.setdefault(b.get("group", "Other"), []).append(b)

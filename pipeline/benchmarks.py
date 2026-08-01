@@ -81,10 +81,13 @@ def cybergym(cfg: dict) -> dict:
             r.get("date") or r.get("model_release_date") or "—",
         ])
     rows.sort(key=lambda x: _sortkey(x[2]), reverse=True)
+    newest = max((str(r[3]) for r in rows if str(r[3])[:4].isdigit()), default="")
     return {
         "columns": ["Agent", "Model", "Score@10", "Date"],
         "rows": rows[: cfg.get("top", 12)],
         "note": f"{len(data.get(level, []))} entries on {level}",
+        "newest": newest,
+        "stale": _staleness(newest),
     }
 
 
@@ -103,7 +106,11 @@ def cybergym_e2e(cfg: dict) -> dict:
     return {
         "columns": ["Model", "Harness", "Patch only", "S1", "S2", "Budget"],
         "rows": rows[: cfg.get("top", 12)],
-        "note": f"{len(data.get('results', []))} entries",
+        # The upstream file carries no per-entry dates, and the file's
+        # Last-Modified is a site-wide rebuild stamp shared by every board —
+        # using it would imply a freshness we cannot actually verify.
+        "note": f"{len(data.get('results', []))} entries · upstream publishes no dates",
+        "newest": "",
     }
 
 
@@ -119,10 +126,13 @@ def exploitgym(cfg: dict) -> dict:
         for r in results
     ]
     rows.sort(key=lambda x: _sortkey(x[2]), reverse=True)
+    newest = max((str(r[3]) for r in rows if str(r[3])[:4].isdigit()), default="")
     return {
         "columns": ["Model", "Agent", "Userspace", "Date", "Eval"],
         "rows": rows[: cfg.get("top", 12)],
         "note": f"{len(results)} entries",
+        "newest": newest,
+        "stale": _staleness(newest),
     }
 
 
@@ -145,6 +155,7 @@ def aider_polyglot(cfg: dict) -> dict:
         "columns": ["Model", "Pass rate", "Well-formed edits", "Date"],
         "rows": rows,
         "note": f"{len(entries)} entries · newest {newest or 'unknown'}",
+        "newest": newest,
         "stale": _staleness(newest),
     }
 
@@ -218,6 +229,7 @@ def swebench_verified(cfg: dict) -> dict:
         "columns": ["Submission", "Resolved", "Count", "Date"],
         "rows": rows[: cfg.get("top", 12)],
         "note": f"{len(rows)} of the {cfg.get('scan', 25)} most recent submissions · newest {newest_iso or '?'}",
+        "newest": newest_iso,
         "stale": _staleness(newest_iso),
     }
 
@@ -250,6 +262,7 @@ def swebench_bash_only(cfg: dict) -> dict:
         "columns": ["Model", "Resolved", "$/instance", "Date"],
         "rows": rows[: cfg.get("top", 12)],
         "note": f"{len(rows)} submissions · newest {newest_iso or '?'}",
+        "newest": newest_iso,
         "stale": _staleness(newest_iso),
     }
 
@@ -273,7 +286,7 @@ def fetch_all(boards: list[dict]) -> list[dict]:
             "id": b.get("id", ""), "title": b.get("title", ""),
             "group": b.get("group", "Other"), "blurb": b.get("blurb", ""),
             "source_url": b.get("source_url") or b.get("url", ""),
-            "columns": [], "rows": [], "note": "", "error": "", "stale": "",
+            "columns": [], "rows": [], "note": "", "error": "", "stale": "", "newest": "",
         }
         if not parser:
             entry["error"] = f"no parser named {b.get('parser')!r}"
