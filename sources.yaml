@@ -35,14 +35,45 @@ defaults:
 # which is far more stable than scraping the rendered page.
 # =============================================================================
 benchmarks:
+  # Ordered best-first. SWE-bench bash-only is the freshest coding board with
+  # current frontier models; Verified is the most-cited but lags; Aider is the
+  # only multi-language signal here but is badly out of date.
+  - id: swebench-bash-only
+    group: 💻 Coding
+    title: SWE-bench (bash-only)
+    blurb: >-
+      Real GitHub issues resolved with only shell access — the freshest coding
+      board, and the only one reporting cost per instance. Python repos.
+    parser: swebench_bash_only
+    url: https://github.com/SWE-bench/experiments
+    source_url: https://www.swebench.com/
+    scan: 25
+    top: 12
+
+  - id: swebench-verified
+    group: 💻 Coding
+    title: SWE-bench Verified
+    blurb: >-
+      The most-cited coding benchmark: 500 human-validated GitHub issues.
+      Python repos only.
+    parser: swebench_verified
+    url: https://github.com/SWE-bench/experiments
+    source_url: https://www.swebench.com/
+    split: verified
+    total_instances: 500
+    scan: 25
+    top: 12
+
   - id: aider-polyglot
     group: 💻 Coding
     title: Aider Polyglot
-    blurb: Multi-language code-editing benchmark; pass rate over two attempts.
+    blurb: >-
+      The only multi-language board here (C++, Go, Java, JS, Python, Rust) —
+      kept for that reason despite being badly out of date.
     parser: aider_polyglot
     url: https://raw.githubusercontent.com/Aider-AI/aider/main/aider/website/_data/polyglot_leaderboard.yml
     source_url: https://aider.chat/docs/leaderboards/
-    top: 12
+    top: 10
 
   - id: cybergym
     group: 🛡️ Cybersecurity

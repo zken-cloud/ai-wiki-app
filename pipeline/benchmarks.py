@@ -11,6 +11,7 @@ and the rest of the page still renders.
 
 from __future__ import annotations
 
+import concurrent.futures as cf
 import datetime as dt
 import logging
 from typing import Any, Callable
@@ -148,7 +149,114 @@ def aider_polyglot(cfg: dict) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# SWE-bench — read from the canonical `SWE-bench/experiments` repo.
+#
+# swebench.com is a client-rendered SPA with no data file, but every submission
+# is committed to that repo. One git-tree call lists everything (the GitHub
+# *contents* API is limited to 60 req/hr unauthenticated, so we must not walk
+# it per-submission); the files themselves come from raw.githubusercontent.com,
+# which is not rate-limited the same way.
+# --------------------------------------------------------------------------- #
+
+_TREE = "https://api.github.com/repos/SWE-bench/experiments/git/trees/main?recursive=1"
+_RAW = "https://raw.githubusercontent.com/SWE-bench/experiments/main/"
+
+
+def _sub_date(sub: str) -> str:
+    """Submission dirs are date-prefixed: 20260217_foo -> 2026-02-17."""
+    d = sub[:8]
+    return f"{d[:4]}-{d[4:6]}-{d[6:8]}" if d.isdigit() and len(d) == 8 else "—"
+
+
+def _swebench_submissions(split: str) -> list[str]:
+    tree = _get(_TREE).json()
+    if tree.get("truncated"):
+        log.warning("SWE-bench tree listing truncated; results may be incomplete")
+    prefix = f"evaluation/{split}/"
+    subs = {
+        p.split("/")[2]
+        for p in (x["path"] for x in tree.get("tree", []))
+        if p.startswith(prefix) and p.count("/") >= 3
+    }
+    return sorted(subs)  # dirs are date-prefixed, so this is chronological
+
+
+def _fetch_json(url: str) -> Any:
+    return _get(url).json()
+
+
+def _fetch_yaml(url: str) -> Any:
+    return yaml.safe_load(_get(url).text)
+
+
+def swebench_verified(cfg: dict) -> dict:
+    """SWE-bench Verified: score = resolved / 500 instances."""
+    split = cfg.get("split", "verified")
+    total = cfg.get("total_instances", 500)
+    subs = _swebench_submissions(split)[-cfg.get("scan", 25):]
+
+    def one(sub: str) -> list | None:
+        base = f"{_RAW}evaluation/{split}/{sub}/"
+        try:
+            resolved = len(_fetch_json(base + "results/results.json").get("resolved", []))
+        except Exception:  # noqa: BLE001 - submissions without results are skipped
+            return None
+        name = sub
+        try:
+            info = (_fetch_yaml(base + "metadata.yaml") or {}).get("info", {}) or {}
+            name = info.get("name") or sub
+        except Exception:  # noqa: BLE001 - name is cosmetic
+            pass
+        return [str(name)[:60], f"{100 * resolved / total:.1f}%", f"{resolved}/{total}", _sub_date(sub)]
+
+    with cf.ThreadPoolExecutor(8) as ex:
+        rows = [r for r in ex.map(one, subs) if r]
+    rows.sort(key=lambda x: _sortkey(x[1]), reverse=True)
+    newest_iso = max((r[3] for r in rows if r[3] != "—"), default="")
+    return {
+        "columns": ["Submission", "Resolved", "Count", "Date"],
+        "rows": rows[: cfg.get("top", 12)],
+        "note": f"{len(rows)} of the {cfg.get('scan', 25)} most recent submissions · newest {newest_iso or '?'}",
+        "stale": _staleness(newest_iso),
+    }
+
+
+def swebench_bash_only(cfg: dict) -> dict:
+    """SWE-bench bash-only: the score is reported directly in metadata.yaml."""
+    split = "bash-only"
+    subs = _swebench_submissions(split)[-cfg.get("scan", 25):]
+
+    def one(sub: str) -> list | None:
+        try:
+            info = (_fetch_yaml(f"{_RAW}evaluation/{split}/{sub}/metadata.yaml") or {}).get("info", {}) or {}
+        except Exception:  # noqa: BLE001
+            return None
+        score = info.get("resolved")
+        if score is None:
+            return None
+        return [
+            str(info.get("name") or sub)[:60],
+            _num(score, "%"),
+            (f"${info['instance_cost']:.2f}" if isinstance(info.get("instance_cost"), (int, float)) else "—"),
+            _sub_date(sub),
+        ]
+
+    with cf.ThreadPoolExecutor(8) as ex:
+        rows = [r for r in ex.map(one, subs) if r]
+    rows.sort(key=lambda x: _sortkey(x[1]), reverse=True)
+    newest_iso = max((r[3] for r in rows if r[3] != "—"), default="")
+    return {
+        "columns": ["Model", "Resolved", "$/instance", "Date"],
+        "rows": rows[: cfg.get("top", 12)],
+        "note": f"{len(rows)} submissions · newest {newest_iso or '?'}",
+        "stale": _staleness(newest_iso),
+    }
+
+
 PARSERS: dict[str, Callable[[dict], dict]] = {
+    "swebench_verified": swebench_verified,
+    "swebench_bash_only": swebench_bash_only,
     "cybergym": cybergym,
     "cybergym_e2e": cybergym_e2e,
     "exploitgym": exploitgym,
