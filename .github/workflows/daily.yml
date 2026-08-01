@@ -30,13 +30,6 @@ jobs:
         with:
           path: app
 
-      - name: Checkout wiki content
-        uses: actions/checkout@v4
-        with:
-          repository: zken-cloud/ai-wiki
-          token: ${{ secrets.WIKI_TOKEN }}
-          path: wiki
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -45,6 +38,7 @@ jobs:
 
       - run: pip install -r app/requirements.txt
 
+      # Auth first: fail fast on credentials before doing any other work.
       - name: Authenticate to Google Cloud (keyless, via WIF)
         uses: google-github-actions/auth@v2
         with:
@@ -56,6 +50,16 @@ jobs:
         env:
           GCP_PROJECT: ${{ vars.GCP_PROJECT }}
         run: python run.py --check
+
+      # Only needed when we intend to write. Skipping it on a dry run means
+      # WIF can be validated end-to-end without a cross-repo push credential.
+      - name: Checkout wiki content
+        if: ${{ inputs.dry_run != true }}
+        uses: actions/checkout@v4
+        with:
+          repository: zken-cloud/ai-wiki
+          token: ${{ secrets.WIKI_TOKEN }}
+          path: wiki
 
       - name: Run pipeline
         working-directory: app
