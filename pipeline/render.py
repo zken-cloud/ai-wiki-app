@@ -354,6 +354,7 @@ def signal_page(wiki: Path, date: str, sig: dict, counts: dict[str, int],
     out += [
         "",
         f"- 🧠 **[Model Tracker](models.md)** — <small>what each lab currently ships</small>",
+        f"- 🏟️ **[Benchmark Arena](benchmarks.md)** — <small>where models stand on coding & cyber evals</small>",
         f"- 📰 **[Full briefing for {date}](daily/{date}.md)** — <small>the long version</small>",
         "- 🗂️ **[All briefings](daily/index.md)**",
         "",
@@ -434,3 +435,71 @@ def models_page(wiki: Path, store: dict) -> None:
             )
         out += ["", f"<small>{len(models)} models tracked · updated {store.get('updated_at','')}</small>", ""]
     (wiki / "docs" / "models.md").write_text("\n".join(out))
+
+
+# --------------------------------------------------------------------------- #
+# Benchmark Arena
+# --------------------------------------------------------------------------- #
+
+def benchmarks_page(wiki: Path, boards: list[dict]) -> None:
+    """Render leaderboard snapshots, grouped by what they measure."""
+    out = [
+        "# 🏟️ Benchmark Arena",
+        "",
+        "*Where models currently stand. Snapshots of public leaderboards, "
+        "refreshed on each run — follow the source link for the full board.*",
+        "",
+    ]
+    groups: dict[str, list[dict]] = {}
+    for b in boards:
+        groups.setdefault(b.get("group", "Other"), []).append(b)
+
+    for group, items in groups.items():
+        out += [f"## {group}", ""]
+        for b in items:
+            out += [f"### [{_esc(b['title'])}]({b['source_url']})", ""]
+            if b.get("blurb"):
+                out += [f"*{b['blurb']}*", ""]
+            if b.get("error"):
+                out += [
+                    '!!! warning "Leaderboard unavailable"',
+                    f"    `{_esc(b['error'])}`",
+                    "",
+                    "    The other boards on this page are unaffected.",
+                    "",
+                ]
+                continue
+            if not b.get("rows"):
+                out += ["_No rows returned._", ""]
+                continue
+            if b.get("stale"):
+                out += [
+                    '!!! warning "Out of date"',
+                    f"    {_esc(b['stale'])} — treat these as historical, not "
+                    "the current state of the art.",
+                    "",
+                ]
+            out += ["| " + " | ".join(b["columns"]) + " |",
+                    "|" + "|".join(["---"] * len(b["columns"])) + "|"]
+            for r in b["rows"]:
+                out.append("| " + " | ".join(_esc(str(c)) for c in r) + " |")
+            out += ["", f"<small>{_esc(b.get('note',''))}</small>", ""]
+
+    out += [
+        "---",
+        "",
+        f"<small>Snapshot taken {dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}. "
+        "Leaderboards are maintained by their respective authors; figures are "
+        "reproduced as published.</small>",
+        "",
+    ]
+    (wiki / "docs" / "benchmarks.md").write_text("\n".join(out))
+
+
+def export_benchmarks(wiki: Path, boards: list[dict]) -> None:
+    path = wiki / "data" / "benchmarks.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(
+        {"updated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+         "boards": boards},
+        indent=2, ensure_ascii=False))

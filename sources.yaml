@@ -29,6 +29,49 @@ defaults:
     signal: gemini-2.5-pro         # picks the day's top items for the front page
   concurrency: 6
 
+# =============================================================================
+# Benchmark Arena — leaderboard snapshots (state, not stream).
+# Each board reads the same structured file its own site renders client-side,
+# which is far more stable than scraping the rendered page.
+# =============================================================================
+benchmarks:
+  - id: aider-polyglot
+    group: 💻 Coding
+    title: Aider Polyglot
+    blurb: Multi-language code-editing benchmark; pass rate over two attempts.
+    parser: aider_polyglot
+    url: https://raw.githubusercontent.com/Aider-AI/aider/main/aider/website/_data/polyglot_leaderboard.yml
+    source_url: https://aider.chat/docs/leaderboards/
+    top: 12
+
+  - id: cybergym
+    group: 🛡️ Cybersecurity
+    title: CyberGym
+    blurb: Real-world vulnerability discovery by AI agents (level 1).
+    parser: cybergym
+    url: https://cybergym.io/assets/data/cybergym.json
+    source_url: https://cybergym.io/cybergym/
+    level: level1
+    top: 12
+
+  - id: cybergym-e2e
+    group: 🛡️ Cybersecurity
+    title: CyberGym End-to-End
+    blurb: Patch-and-exploit success under a fixed time and cost budget.
+    parser: cybergym_e2e
+    url: https://cybergym.io/assets/data/cybergym-e2e.json
+    source_url: https://cybergym.io/cybergym-e2e/
+    top: 12
+
+  - id: exploitgym
+    group: 🛡️ Cybersecurity
+    title: ExploitGym
+    blurb: Exploit-development capability on real userspace targets.
+    parser: exploitgym
+    url: https://cybergym.io/assets/data/exploitgym.json
+    source_url: https://cybergym.io/exploitgym/
+    top: 12
+
 categories:
 
   # ---------------------------------------------------------------- papers --

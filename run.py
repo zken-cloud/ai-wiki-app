@@ -20,6 +20,7 @@ from pathlib import Path
 import yaml
 
 from pipeline import collect as collect_mod
+from pipeline import benchmarks as bench_mod
 from pipeline import enrich, llm, render, state
 
 log = logging.getLogger("ai-wiki")
@@ -209,6 +210,14 @@ def main() -> int:
 
     if grand_total:
         ledger.save()
+
+    # Leaderboards are state, not daily content — refresh every run, even when
+    # no new articles were found.
+    if cfg.get("benchmarks"):
+        boards = bench_mod.fetch_all(cfg["benchmarks"])
+        render.benchmarks_page(wiki, boards)
+        render.export_benchmarks(wiki, boards)
+
     render.rebuild_indexes(wiki, cfg["categories"])
     log.info("done: %s", wiki)
     return 0
