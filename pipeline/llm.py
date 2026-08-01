@@ -34,6 +34,33 @@ ENDPOINT = (
 _creds_lock = threading.Lock()
 _creds = None
 
+# Per-run token accounting, so a large backfill can report what it actually cost.
+USAGE: dict[str, dict[str, int]] = {}
+_usage_lock = threading.Lock()
+
+
+def _record(model: str, meta: dict[str, Any]) -> None:
+    with _usage_lock:
+        row = USAGE.setdefault(model, {"calls": 0, "in": 0, "out": 0})
+        row["calls"] += 1
+        row["in"] += int(meta.get("promptTokenCount", 0) or 0)
+        row["out"] += int(
+            (meta.get("candidatesTokenCount", 0) or 0)
+            + (meta.get("thoughtsTokenCount", 0) or 0)
+        )
+
+
+def usage_report() -> str:
+    if not USAGE:
+        return "no LLM calls"
+    lines = [f"{'model':<26}{'calls':>7}{'in_tok':>12}{'out_tok':>10}"]
+    tc = ti = to = 0
+    for m, r in sorted(USAGE.items()):
+        lines.append(f"{m:<26}{r['calls']:>7}{r['in']:>12,}{r['out']:>10,}")
+        tc, ti, to = tc + r["calls"], ti + r["in"], to + r["out"]
+    lines.append(f"{'TOTAL':<26}{tc:>7}{ti:>12,}{to:>10,}")
+    return "\n".join(lines)
+
 
 def _token() -> str:
     """Fetch (and lazily refresh) an access token. Thread-safe."""
@@ -106,7 +133,9 @@ def generate(
             last = f"transport: {e}"
         else:
             if r.status_code == 200:
-                return _extract(r.json(), schema)
+                payload = r.json()
+                _record(model, payload.get("usageMetadata", {}) or {})
+                return _extract(payload, schema)
             last = f"HTTP {r.status_code}: {r.text[:300]}"
             # 4xx other than rate-limit is not retryable
             if r.status_code not in (408, 429) and r.status_code < 500:

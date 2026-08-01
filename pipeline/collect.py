@@ -10,7 +10,10 @@ import concurrent.futures as cf
 import datetime as dt
 import hashlib
 import logging
+import random
 import re
+import threading
+import time
 import xml.etree.ElementTree as ET
 from typing import Any, Iterable
 
@@ -22,6 +25,42 @@ log = logging.getLogger(__name__)
 UA = {"User-Agent": "ai-wiki/1.0 (+https://github.com/zken-cloud/ai-wiki)"}
 TIMEOUT = 45
 SM_NS = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
+
+# arXiv asks API clients to leave ~3s between requests. A 30-day backfill makes
+# 4 requests per day; without pacing arXiv returns 429s and whole days silently
+# lose their paper coverage. Serialise every arXiv call behind a min-interval.
+ARXIV_MIN_INTERVAL = 3.0
+_arxiv_lock = threading.Lock()
+_arxiv_last = 0.0
+
+
+def _arxiv_get(params: dict, attempts: int = 4) -> requests.Response:
+    """Rate-limited, retrying GET against the arXiv API."""
+    global _arxiv_last
+    last_err = ""
+    for attempt in range(attempts):
+        r = None
+        with _arxiv_lock:
+            wait = ARXIV_MIN_INTERVAL - (time.monotonic() - _arxiv_last)
+            if wait > 0:
+                time.sleep(wait)
+            try:
+                r = requests.get(
+                    "https://export.arxiv.org/api/query",
+                    params=params, headers=UA, timeout=TIMEOUT,
+                )
+            except requests.RequestException as e:
+                last_err = f"{type(e).__name__}: {e}"
+            finally:
+                _arxiv_last = time.monotonic()
+        if r is not None and r.status_code == 200:
+            return r
+        if r is not None:
+            last_err = f"HTTP {r.status_code}"
+        backoff = ARXIV_MIN_INTERVAL * (2 ** attempt) + random.uniform(0, 1.0)
+        log.warning("arxiv retry %d/%d in %.1fs (%s)", attempt + 1, attempts, backoff, last_err)
+        time.sleep(backoff)
+    raise RuntimeError(f"arxiv unavailable after {attempts} attempts: {last_err}")
 
 
 def _uid(*parts: str) -> str:
@@ -73,13 +112,20 @@ def _recent(iso_date: str, days: int) -> bool:
 # Adapters
 # --------------------------------------------------------------------------- #
 
-def hf_daily(cfg: dict, window: int) -> list[dict]:
-    """Hugging Face curated daily papers — carries community upvotes."""
+def hf_daily(cfg: dict, window: int, date: str | None = None) -> list[dict]:
+    """Hugging Face curated daily papers — carries community upvotes.
+
+    Supports historical retrieval: `?date=YYYY-MM-DD` returns that day's
+    curated set, which is what makes paper backfill possible.
+    """
     out: list[dict] = []
+    params: dict[str, Any] = {"limit": cfg.get("limit", 40)}
+    if date:
+        params["date"] = date
     try:
         r = requests.get(
             "https://huggingface.co/api/daily_papers",
-            params={"limit": cfg.get("limit", 40)},
+            params=params,
             headers=UA, timeout=TIMEOUT,
         )
         r.raise_for_status()
@@ -95,7 +141,9 @@ def hf_daily(cfg: dict, window: int) -> list[dict]:
         if not title:
             continue
         published = _iso(row.get("publishedAt") or p.get("publishedAt"))
-        if not _recent(published, window):
+        if date:
+            published = published or date
+        elif not _recent(published, window):
             continue
         out.append({
             "uid": _uid("hf", arxiv_id or title),
@@ -117,23 +165,29 @@ def hf_daily(cfg: dict, window: int) -> list[dict]:
     return out
 
 
-def arxiv(cfg: dict, window: int) -> list[dict]:
-    """arXiv Atom API, one query per category."""
+def arxiv(cfg: dict, window: int, date: str | None = None) -> list[dict]:
+    """arXiv Atom API, one query per category.
+
+    With `date`, restricts to that submission day via a submittedDate range —
+    this is what lets the archive be backfilled. NOTE: the range must be passed
+    through `params=` so requests encodes the brackets; hand-built query strings
+    silently return the newest papers instead of the requested window.
+    """
     out: list[dict] = []
     per_cat = cfg.get("max_results_per_category", 60)
     for cat in cfg.get("categories", []):
+        query = f"cat:{cat}"
+        if date:
+            d = date.replace("-", "")
+            nxt = (dt.date.fromisoformat(date) + dt.timedelta(days=1)).isoformat().replace("-", "")
+            query = f"cat:{cat} AND submittedDate:[{d}0000 TO {nxt}0000]"
         try:
-            r = requests.get(
-                "https://export.arxiv.org/api/query",
-                params={
-                    "search_query": f"cat:{cat}",
-                    "max_results": per_cat,
-                    "sortBy": "submittedDate",
-                    "sortOrder": "descending",
-                },
-                headers=UA, timeout=TIMEOUT,
-            )
-            r.raise_for_status()
+            r = _arxiv_get({
+                "search_query": query,
+                "max_results": per_cat,
+                "sortBy": "submittedDate",
+                "sortOrder": "descending",
+            })
             feed = feedparser.parse(r.content)
         except Exception as e:  # noqa: BLE001
             log.error("arxiv %s failed: %s", cat, e)
@@ -141,7 +195,9 @@ def arxiv(cfg: dict, window: int) -> list[dict]:
 
         for e in feed.entries:
             published = _iso(getattr(e, "published_parsed", None)) or _iso(getattr(e, "published", ""))
-            if not _recent(published, window):
+            if date:
+                published = published or date
+            elif not _recent(published, window):
                 continue
             link = getattr(e, "link", "")
             aid = link.rsplit("/", 1)[-1] if link else ""
@@ -290,6 +346,73 @@ def sitemap(cfg: dict, window: int) -> list[dict]:
 
 
 ADAPTERS = {"hf_daily": hf_daily, "arxiv": arxiv, "rss": rss, "sitemap": sitemap}
+
+
+DATED = ("hf_daily", "arxiv")   # adapters that can query a specific day
+
+
+def _finalise(items: list[dict], category: str) -> list[dict]:
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for it in items:
+        if it["uid"] in seen:
+            continue
+        seen.add(it["uid"])
+        it["category"] = category
+        unique.append(it)
+    return unique
+
+
+def prefetch_undated(sources: Iterable[dict], window: int) -> dict[int, dict[str, list[dict]]]:
+    """Fetch feed/sitemap sources ONCE and bucket their items by publish date.
+
+    Backfilling 30 days must not mean re-fetching every RSS feed 30 times:
+    a feed returns the same payload regardless of the date we are building.
+    Keyed by position in `sources` so two rss blocks never collide.
+    """
+    buckets: dict[int, dict[str, list[dict]]] = {}
+    for idx, src in enumerate(sources):
+        kind = src.get("type")
+        if kind in DATED:
+            continue
+        fn = ADAPTERS.get(kind)
+        if not fn:
+            log.error("unknown source type %r", kind)
+            continue
+        try:
+            items = fn(src, window)
+        except Exception as e:  # noqa: BLE001
+            log.exception("prefetch %s crashed: %s", kind, e)
+            items = []
+        by_date: dict[str, list[dict]] = {}
+        for it in items:
+            by_date.setdefault(it.get("published") or "", []).append(it)
+        buckets[idx] = by_date
+    return buckets
+
+
+def collect_for_date(
+    sources: Iterable[dict],
+    window: int,
+    category: str,
+    date: str,
+    prefetched: dict[int, dict[str, list[dict]]],
+) -> list[dict]:
+    """Assemble one historical day: live date-queries + pre-bucketed feeds."""
+    items: list[dict] = []
+    for idx, src in enumerate(sources):
+        kind = src.get("type")
+        fn = ADAPTERS.get(kind)
+        if not fn:
+            continue
+        if kind in DATED:
+            try:
+                items.extend(fn(src, window, date=date))
+            except Exception as e:  # noqa: BLE001
+                log.exception("source %s/%s crashed on %s: %s", category, kind, date, e)
+        else:
+            items.extend(prefetched.get(idx, {}).get(date, []))
+    return _finalise(items, category)
 
 
 def collect(sources: Iterable[dict], window: int, category: str) -> list[dict]:
