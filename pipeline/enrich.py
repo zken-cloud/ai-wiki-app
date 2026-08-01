@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import concurrent.futures as cf
 import logging
+import re
 from typing import Any
 
 from . import llm
@@ -240,3 +241,204 @@ def digest(by_category: dict[str, list[dict]], date: str, model: str) -> str:
     except Exception as e:  # noqa: BLE001
         log.error("digest failed: %s", e)
         return "_Digest generation failed for this run; per-category pages below are unaffected._\n"
+
+
+# --------------------------------------------------------------------------- #
+# 6. Signal — the one-screen brief
+# --------------------------------------------------------------------------- #
+
+SIGNAL_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "picks": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "i": {"type": "INTEGER"},
+                    "headline": {"type": "STRING"},
+                    "why": {"type": "STRING"},
+                    "tag": {"type": "STRING", "enum": ["model", "vendor", "security", "infra", "research"]},
+                },
+                "required": ["i", "headline", "why", "tag"],
+            },
+        },
+        "quiet_day": {"type": "BOOLEAN"},
+    },
+    "required": ["picks", "quiet_day"],
+}
+
+SIGNAL_SYSTEM = (
+    "You are the editor of a one-screen daily brief for a senior engineer who "
+    "tracks AI models, lab announcements, and AI security. They have limited "
+    "time and read this on a phone. Be ruthless: most days genuinely contain "
+    "only a handful of things worth knowing. Never pad to fill slots."
+)
+
+
+def signal(all_items: list[dict], date: str, model: str, limit: int = 8) -> dict:
+    """Rank the whole day and return only what is worth a phone screen.
+
+    Deliberately biased toward model releases, lab/vendor announcements and AI
+    security; research is included only when it is genuinely notable, because
+    that is what the reader asked to be focused on.
+    """
+    if not all_items:
+        return {"picks": [], "quiet_day": True}
+
+    listing = "\n".join(
+        f"[{n}] ({it.get('category')}) {it['title']}\n"
+        f"    {(it.get('_summary') or {}).get('tldr', '')[:240]}"
+        for n, it in enumerate(all_items)
+    )
+    prompt = (
+        f"Today is {date}. Below are every item collected, with their category.\n\n"
+        f"{listing}\n\n"
+        f"Select AT MOST {limit} items that a busy reader must not miss, in "
+        "priority order. Priorities, highest first:\n"
+        "  1. New model releases or major capability/pricing changes\n"
+        "  2. Announcements from major AI labs and vendors\n"
+        "  3. AI security: real attacks, vulnerabilities, defensive guidance\n"
+        "  4. Infrastructure shifts that change how AI is deployed\n"
+        "  5. Research — ONLY if genuinely field-moving, not incremental\n\n"
+        "For each pick give:\n"
+        "  i        - the bracketed index\n"
+        "  headline - max 12 words, concrete and specific, no clickbait\n"
+        "  why      - ONE sentence on why it matters to this reader\n"
+        "  tag      - one of model|vendor|security|infra|research\n\n"
+        "Fewer, better picks beat a full list. If the day is genuinely quiet, "
+        "return fewer items and set quiet_day true. Never invent items."
+    )
+    try:
+        out = llm.generate(
+            prompt, model=model, schema=SIGNAL_SCHEMA, system=SIGNAL_SYSTEM,
+            max_tokens=8000, temperature=0.2,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.error("signal failed: %s", e)
+        return {"picks": [], "quiet_day": False, "_degraded": True}
+
+    picks = []
+    for p in (out.get("picks") or [])[:limit]:
+        try:
+            it = all_items[int(p["i"])]
+        except (KeyError, ValueError, IndexError):
+            continue
+        picks.append({
+            "headline": p.get("headline") or it["title"],
+            "why": p.get("why", ""),
+            "tag": p.get("tag", "research"),
+            "title": it["title"],
+            "url": it["url"],
+            "source": it["source"],
+            "category": it.get("category", ""),
+        })
+    return {"picks": picks, "quiet_day": bool(out.get("quiet_day")) and not picks}
+
+
+# --------------------------------------------------------------------------- #
+# 7. Model release extraction
+# --------------------------------------------------------------------------- #
+
+# Bare product families are not releases: "Claude" is a family, "Claude Opus 5"
+# is a model. Requiring a version-ish token kills most false positives.
+_FAMILIES = {
+    "claude", "gemini", "gpt", "llama", "mistral", "qwen", "grok", "codex",
+    "copilot", "phi", "command", "titan", "nova", "deepseek", "kimi", "sora",
+}
+
+
+def _is_specific_model(name: str) -> bool:
+    toks = [t for t in re.split(r"[\s\-_/]+", name.strip()) if t]
+    if not toks:
+        return False
+    if len(toks) == 1 and toks[0].lower() in _FAMILIES:
+        return False
+    # Needs a version number or a qualifier beyond the bare family word.
+    return any(any(ch.isdigit() for ch in t) for t in toks) or len(toks) >= 2
+
+
+RELEASE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "releases": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "i": {"type": "INTEGER"},
+                    "vendor": {"type": "STRING"},
+                    "model_name": {"type": "STRING"},
+                    "kind": {"type": "STRING", "enum": ["release", "update", "deprecation"]},
+                    "note": {"type": "STRING"},
+                },
+                "required": ["i", "vendor", "model_name", "kind", "note"],
+            },
+        }
+    },
+    "required": ["releases"],
+}
+
+
+def extract_releases(items: list[dict], date: str, model: str) -> list[dict]:
+    """Find actual model releases so the tracker answers 'what is current?'.
+
+    Strict on purpose: a blog post *about* a model is not a release. Only a
+    newly available (or updated/deprecated) named model counts.
+    """
+    if not items:
+        return []
+    listing = "\n".join(
+        f"[{n}] {it['title']}\n    {(it.get('_summary') or {}).get('tldr','')[:220]}"
+        for n, it in enumerate(items)
+    )
+    prompt = (
+        "Identify items that ANNOUNCE a specific, named AI model becoming "
+        "available, being updated, or being deprecated.\n\n"
+        "Count it ONLY if ALL of these hold:\n"
+        "  - a concrete, versioned model name is given (e.g. 'Claude Opus 5', "
+        "'Gemini 3.6 Flash', 'Kimi K3') — NOT a bare product family "
+        "('Claude', 'Gemini', 'GPT', 'Codex')\n"
+        "  - the item IS the announcement, not third-party coverage of someone "
+        "using, benchmarking, integrating or writing about the model\n"
+        "  - the model itself changed; a partnership, case study, customer "
+        "story, tutorial, or a tool that merely supports the model does NOT count\n\n"
+        "Return an empty list if none qualify — that is the common case, and "
+        "over-reporting is worse than missing one.\n\n"
+        f"Items:\n{listing}"
+    )
+    try:
+        out = llm.generate(
+            prompt, model=model, schema=RELEASE_SCHEMA,
+            system="You are a precise release-notes archivist. You do not over-report.",
+            max_tokens=4000, temperature=0.0, thinking_budget=0,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.error("release extraction failed: %s", e)
+        return []
+
+    found = []
+    for r in out.get("releases") or []:
+        try:
+            it = items[int(r["i"])]
+        except (KeyError, ValueError, IndexError):
+            continue
+        name = (r.get("model_name") or "").strip()
+        vendor = (r.get("vendor") or "").strip()
+        if not name or not vendor:
+            continue
+        if not _is_specific_model(name):
+            log.debug("dropping vague model name %r", name)
+            continue
+        note = (r.get("note") or "")
+        if any(p in note.lower() for p in ("content is empty", "no new information",
+                                           "cannot be extracted", "provided content")):
+            note = ""  # a degraded summary leaked through; better blank than wrong
+        found.append({
+            "vendor": vendor, "model_name": name,
+            "kind": r.get("kind", "release"), "note": note[:300],
+            "date": it.get("published") or date, "url": it["url"], "source": it["source"],
+        })
+    if found:
+        log.info("model releases detected: %s", ", ".join(f"{f['vendor']} {f['model_name']}" for f in found))
+    return found

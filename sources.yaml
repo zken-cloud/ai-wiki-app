@@ -26,6 +26,7 @@ defaults:
     score: gemini-2.5-flash-lite   # cheapest — bulk relevance triage
     summarize: gemini-3.6-flash    # per-item summaries
     digest: gemini-2.5-pro         # one cross-category daily digest
+    signal: gemini-2.5-pro         # picks the day's top items for the front page
   concurrency: 6
 
 categories:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import logging
 import sys
 from pathlib import Path
@@ -84,7 +85,12 @@ def build_day(
     total = sum(counts.values())
     if dry_run or not total:
         return total
-    if existing and total == sum(len(v) for v in existing.values()):
+    # Nothing new: skip the expensive digest, but still ensure the Signal
+    # brief exists — it is the homepage and the PWA's launch target, so it
+    # must never be missing or stale for the current date.
+    nothing_new = bool(existing) and total == sum(len(v) for v in existing.values())
+    signal_path = wiki / "data" / "signal" / f"{date}.json"
+    if nothing_new and signal_path.exists():
         log.info("%s: nothing new, pages left as-is", date)
         return total
 
@@ -92,9 +98,26 @@ def build_day(
         next(c["title"] for c in categories if c["id"] == cid): items
         for cid, items in by_cat.items() if items
     }
-    digest_md = enrich.digest(titled, date, models.get("digest", "gemini-2.5-pro"))
-    render.daily_page(wiki, date, digest_md, counts)
-    render.export_json(wiki, date, by_cat)
+    if not nothing_new:
+        digest_md = enrich.digest(titled, date, models.get("digest", "gemini-2.5-pro"))
+        render.daily_page(wiki, date, digest_md, counts)
+        render.export_json(wiki, date, by_cat)
+
+    # --- focus layer: one-screen brief + model tracker ---
+    flat = [it for items in by_cat.values() for it in items]
+
+    sig = enrich.signal(flat, date, models.get("signal", models.get("digest")))
+    render.signal_page(wiki, date, sig, counts, categories)
+    (wiki / "data" / "signal").mkdir(parents=True, exist_ok=True)
+    (wiki / "data" / "signal" / f"{date}.json").write_text(
+        json.dumps({"date": date, **sig}, indent=2, ensure_ascii=False)
+    )
+
+    # Only vendor/infra/security items can plausibly announce a model.
+    candidates = [it for it in flat if it.get("category") in ("vendors", "infra", "security")]
+    releases = enrich.extract_releases(candidates, date, models.get("score"))
+    render.models_page(wiki, render.update_models(wiki, releases))
+
     for items in by_cat.values():
         ledger.mark(items, date)
     return total

@@ -7,6 +7,7 @@ import json
 import logging
 import re
 from pathlib import Path
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -185,9 +186,23 @@ def daily_index(wiki: Path) -> None:
 
 
 def export_json(wiki: Path, date: str, by_cat: dict[str, list[dict]]) -> None:
-    """Machine-readable export, and the recovery source for `load_existing`."""
+    """Machine-readable export, and the recovery source for `load_existing`.
+
+    Categories absent from `by_cat` are carried over from the existing file
+    rather than dropped. Without this, a `--only <category>` run would rewrite
+    the export with just that category, and the next full run would treat every
+    other category as unpublished — losing their pages.
+    """
     path = wiki / "data" / "items" / f"{date}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
+
+    prior_raw: dict[str, Any] = {}
+    if path.exists():
+        try:
+            prior_raw = (json.loads(path.read_text()).get("categories") or {})
+        except (json.JSONDecodeError, OSError) as e:
+            log.error("cannot read %s (%s); not carrying anything over", path, e)
+
     payload = {
         "date": date,
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
@@ -204,6 +219,9 @@ def export_json(wiki: Path, date: str, by_cat: dict[str, list[dict]]) -> None:
             for cat, items in by_cat.items()
         },
     }
+    # Carry over untouched categories verbatim.
+    for cat, rows in prior_raw.items():
+        payload["categories"].setdefault(cat, rows)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
 
 
@@ -268,7 +286,151 @@ def merge_items(existing: list[dict], fresh: list[dict]) -> list[dict]:
 
 
 def rebuild_indexes(wiki: Path, categories: list[dict]) -> None:
+    """Refresh archive indexes.
+
+    Deliberately does NOT touch index.md: that is the Signal brief, written by
+    signal_page(). Only fall back to the generic home page if no brief exists
+    yet (e.g. a fresh clone before the first run).
+    """
     for cat in categories:
         category_index(wiki, cat)
     daily_index(wiki)
-    home(wiki, categories)
+    if not (wiki / "docs" / "index.md").exists():
+        home(wiki, categories)
+
+
+# --------------------------------------------------------------------------- #
+# Signal brief — the PWA's front page
+# --------------------------------------------------------------------------- #
+
+TAG_ICON = {
+    "model": "🧠", "vendor": "📢", "security": "🔒",
+    "infra": "⚙️", "research": "📄",
+}
+
+
+def signal_page(wiki: Path, date: str, sig: dict, counts: dict[str, int],
+                categories: list[dict]) -> None:
+    """Write docs/index.md as a one-screen brief.
+
+    This is what opens when the PWA is launched, so it must stay short: the
+    full per-category lists live one tap away.
+    """
+    picks = sig.get("picks") or []
+    total = sum(counts.values())
+
+    out = [
+        "# Today's Signal",
+        "",
+        f"<small>{date} · {len(picks)} things worth knowing · "
+        f"{total} items reviewed</small>",
+        "",
+    ]
+
+    if not picks:
+        out += [
+            '!!! info "Quiet day"',
+            "    Nothing cleared the bar today. That is a real signal too —",
+            "    the full lists are still below if you want to look.",
+            "",
+        ]
+    else:
+        for n, p in enumerate(picks, 1):
+            icon = TAG_ICON.get(p.get("tag"), "•")
+            out += [
+                f"### {icon} {n}. [{_esc(p['headline'])}]({p['url']})",
+                "",
+                f"{p.get('why','')}",
+                "",
+                f"<small>{_esc(p.get('source',''))} · `{p.get('tag','')}`</small>",
+                "",
+            ]
+
+    out += ["---", "", "## Everything else", ""]
+    for c in categories:
+        n = counts.get(c["id"], 0)
+        label = f"{n} today" if n else "nothing new"
+        out += [f"- {c['icon']} **[{c['title']}]({c['id']}/index.md)** — <small>{label}</small>"]
+    out += [
+        "",
+        f"- 🧠 **[Model Tracker](models.md)** — <small>what each lab currently ships</small>",
+        f"- 📰 **[Full briefing for {date}](daily/{date}.md)** — <small>the long version</small>",
+        "- 🗂️ **[All briefings](daily/index.md)**",
+        "",
+        "---",
+        "",
+        "<small>Search with the box above or press <kbd>/</kbd>. "
+        "Install this as an app from your browser's menu to read offline.</small>",
+        "",
+    ]
+    (wiki / "docs" / "index.md").write_text("\n".join(out))
+
+
+# --------------------------------------------------------------------------- #
+# Model tracker — state, not stream
+# --------------------------------------------------------------------------- #
+
+def _mkey(vendor: str, name: str) -> str:
+    return f"{vendor.strip().lower()}|{name.strip().lower()}"
+
+
+def update_models(wiki: Path, releases: list[dict]) -> dict:
+    """Merge newly-detected releases into the cumulative tracker."""
+    path = wiki / "data" / "models.json"
+    store: dict[str, Any] = {"models": []}
+    if path.exists():
+        try:
+            store = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            log.error("cannot read %s (%s); starting fresh", path, e)
+
+    by_key = {_mkey(m["vendor"], m["model_name"]): m for m in store.get("models", [])}
+    added = 0
+    for r in releases:
+        k = _mkey(r["vendor"], r["model_name"])
+        if k in by_key:
+            # Keep the earliest sighting, but let a later note/url win.
+            prev = by_key[k]
+            prev["date"] = min(prev.get("date") or r["date"], r["date"])
+            if r.get("note"):
+                prev["note"] = r["note"]
+            prev["url"] = r.get("url") or prev.get("url")
+        else:
+            by_key[k] = dict(r)
+            added += 1
+
+    store["models"] = sorted(
+        by_key.values(), key=lambda m: (m.get("date") or "", m["vendor"]), reverse=True
+    )
+    store["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(store, indent=2, ensure_ascii=False))
+    if added:
+        log.info("model tracker: %d new entr%s", added, "y" if added == 1 else "ies")
+    return store
+
+
+def models_page(wiki: Path, store: dict) -> None:
+    models = store.get("models", [])
+    out = [
+        "# 🧠 Model Tracker",
+        "",
+        "*Named model releases as they are detected. Newest first — this answers "
+        "\"what does each lab currently ship?\" without scrolling the archive.*",
+        "",
+    ]
+    if not models:
+        out += ["_No releases detected yet. This fills in as launches are picked up._", ""]
+    else:
+        out += ["| Date | Vendor | Model | What changed | Source |", "|---|---|---|---|---|"]
+        for m in models:
+            note = _esc(m.get("note", ""))[:150]
+            kind = m.get("kind", "release")
+            badge = {"release": "", "update": " *(update)*", "deprecation": " *(deprecated)*"}.get(kind, "")
+            out.append(
+                f"| {m.get('date','')} | {_esc(m.get('vendor',''))} | "
+                f"**{_esc(m.get('model_name',''))}**{badge} | {note} | "
+                f"[link]({m.get('url','')}) |"
+            )
+        out += ["", f"<small>{len(models)} models tracked · updated {store.get('updated_at','')}</small>", ""]
+    (wiki / "docs" / "models.md").write_text("\n".join(out))
