@@ -1,0 +1,90 @@
+name: Daily wiki build
+
+on:
+  schedule:
+    # 06:15 UTC daily — after HF daily papers and the US/EU news cycle land.
+    # Cron on GitHub is best-effort and can lag under load; that is fine here.
+    - cron: "15 6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Collect + triage only; write nothing"
+        type: boolean
+        default: false
+      only:
+        description: "Restrict to one category id (papers|security|infra|vendors)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write   # required to mint the GitHub OIDC token for WIF
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout pipeline
+        uses: actions/checkout@v4
+        with:
+          path: app
+
+      - name: Checkout wiki content
+        uses: actions/checkout@v4
+        with:
+          repository: zken-cloud/ai-wiki
+          token: ${{ secrets.WIKI_TOKEN }}
+          path: wiki
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: app/requirements.txt
+
+      - run: pip install -r app/requirements.txt
+
+      - name: Authenticate to Google Cloud (keyless, via WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Verify Vertex access
+        working-directory: app
+        env:
+          GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+        run: python run.py --check
+
+      - name: Run pipeline
+        working-directory: app
+        env:
+          GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+        run: |
+          ARGS="--wiki ../wiki"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ -n "${{ inputs.only }}" ]; then ARGS="$ARGS --only ${{ inputs.only }}"; fi
+          python run.py $ARGS
+
+      - name: Commit & push wiki
+        if: ${{ inputs.dry_run != true }}
+        working-directory: wiki
+        run: |
+          git config user.name  "ai-wiki-bot"
+          git config user.email "ai-wiki-bot@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to publish."
+            exit 0
+          fi
+          git commit -m "content: daily update $(date -u +%Y-%m-%d)"
+          # Content is append-mostly and this is the only writer, but a
+          # concurrent manual run could still race us.
+          for i in 1 2 3; do
+            git push && exit 0
+            echo "push failed (attempt $i); rebasing on remote"
+            git pull --rebase --autostash || true
+          done
+          echo "::error::could not push wiki changes after 3 attempts"
+          exit 1

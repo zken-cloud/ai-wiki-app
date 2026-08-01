@@ -1,0 +1,218 @@
+# =============================================================================
+# ai-wiki source configuration
+#
+# THIS FILE IS THE EXTENSION POINT.
+#   * New source of an existing type  -> add an entry under `sources:`
+#   * Brand-new category              -> copy a block under `categories:`
+#   * New source *type*               -> add a function to pipeline/collect.py
+#
+# Every feed URL below was verified live (HTTP 200 + parseable) before being
+# committed. Anthropic and vLLM publish no RSS feed, so they use `sitemap`.
+# =============================================================================
+
+defaults:
+  # How far back a source may reach. Undated items are always kept.
+  # 7 days, not 3: several high-value publishers (NCSC, Google Security,
+  # Meta Engineering, Google AI) post weekly or slower, and a 3-day window
+  # returned zero items from them. The seen-ledger makes a wide window safe —
+  # nothing is ever published twice.
+  window_days: 7
+  models:
+    score: gemini-2.5-flash-lite   # cheapest — bulk relevance triage
+    summarize: gemini-2.5-flash    # per-item summaries
+    digest: gemini-2.5-pro         # one cross-category daily digest
+  concurrency: 6
+
+categories:
+
+  # ---------------------------------------------------------------- papers --
+  - id: papers
+    title: Research Papers
+    blurb: New arXiv papers, triaged for relevance and summarised to key points.
+    icon: "\U0001F4C4"
+    sources:
+      # Tier 1: community-curated. Upvotes are a free relevance signal.
+      - type: hf_daily
+        limit: 40
+      # Tier 2: recall — catches what did not trend on HF.
+      - type: arxiv
+        categories: [cs.AI, cs.LG, cs.CL, cs.CR]
+        max_results_per_category: 60
+    filter:
+      # Curated (HF-upvoted) items bypass LLM scoring entirely — saves tokens.
+      always_keep_curated: true
+      min_score: 4
+      max_items: 25
+      # Without this quota the curated tier (pinned to score 5) eats all 25
+      # slots and the arXiv recall tier never appears. 15/10 split.
+      max_curated: 15
+      keywords:
+        - language model
+        - LLM
+        - transformer
+        - agent
+        - reasoning
+        - alignment
+        - fine-tun
+        - RLHF
+        - inference
+        - benchmark
+        - multimodal
+        - retrieval
+        - diffusion
+        - attention
+        - prompt
+        - safety
+        - jailbreak
+        - adversarial
+        - quantiz
+        - distill
+        - evaluation
+    criteria: >
+      Substantive AI/ML research: new methods, models, training or inference
+      techniques, evaluations, or security findings relevant to modern language
+      models and AI systems. Down-rank incremental domain applications with no
+      transferable method contribution.
+
+  # -------------------------------------------------------------- security --
+  - id: security
+    title: AI Security
+    blurb: Threats, vulnerabilities, and defensive research affecting AI systems.
+    icon: "\U0001F512"
+    sources:
+      - type: rss
+        limit_per_feed: 25
+        feeds:
+          # AI-security specialists — highest signal for this category.
+          - name: Embrace The Red
+            url: https://embracethered.com/blog/index.xml
+          - name: NVIDIA AI Security
+            url: https://developer.nvidia.com/blog/category/cybersecurity/feed/
+          # Vendor + national security research (keyword/LLM filtered for AI relevance).
+          - name: Google Online Security Blog
+            url: https://security.googleblog.com/atom.xml
+          - name: Microsoft Security Blog
+            url: https://www.microsoft.com/en-us/security/blog/feed/
+          - name: NCSC UK
+            url: https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml
+          - name: Trail of Bits
+            url: https://blog.trailofbits.com/feed/
+          - name: Unit 42
+            url: https://unit42.paloaltonetworks.com/feed/
+          - name: Google Project Zero
+            url: https://googleprojectzero.blogspot.com/feeds/posts/default
+          # NOTE: CISA (cisa.gov/cybersecurity-advisories/all.xml) is deliberately
+          # omitted. Its WAF 403s any non-browser User-Agent, and its content is
+          # overwhelmingly ICS/OT advisories with no AI dimension. Not worth
+          # spoofing a browser for.
+    filter:
+      min_score: 4
+      max_items: 15
+      keywords:
+        - AI
+        - LLM
+        - machine learning
+        - model
+        - prompt injection
+        - jailbreak
+        - agent
+        - MCP
+        - deepfake
+        - data poisoning
+        - supply chain
+        - inference
+        - GPU
+    criteria: >
+      Security news that touches AI/ML systems: attacks on or via models,
+      prompt injection, agent and tool-use abuse, model supply-chain issues,
+      AI-assisted threat activity, or defensive guidance for AI deployments.
+      EXCLUDE generic CVEs and ICS advisories with no AI dimension.
+
+  # ----------------------------------------------------------------- infra --
+  - id: infra
+    title: AI Infrastructure
+    blurb: Serving, training, hardware, and the systems layer underneath AI.
+    icon: "⚙️"
+    sources:
+      - type: rss
+        limit_per_feed: 25
+        feeds:
+          - name: NVIDIA Developer Blog
+            url: https://developer.nvidia.com/blog/feed
+          - name: NVIDIA Blog
+            url: https://blogs.nvidia.com/feed/
+          - name: PyTorch Blog
+            url: https://pytorch.org/blog/feed.xml
+          - name: AWS Machine Learning Blog
+            url: https://aws.amazon.com/blogs/machine-learning/feed/
+          - name: Google Cloud Blog
+            url: https://cloudblog.withgoogle.com/rss/
+          - name: Meta Engineering
+            url: https://engineering.fb.com/feed/
+      - type: sitemap
+        sites:
+          - name: vLLM Blog
+            url: https://blog.vllm.ai/sitemap.xml
+            path_contains: /20
+            max_pages: 6
+    filter:
+      min_score: 4
+      max_items: 15
+      keywords:
+        - GPU
+        - CUDA
+        - inference
+        - serving
+        - training
+        - cluster
+        - kernel
+        - throughput
+        - latency
+        - quantization
+        - distributed
+        - vLLM
+        - TensorRT
+        - accelerator
+        - memory
+        - scaling
+        - datacenter
+    criteria: >
+      Technical AI-infrastructure content: inference serving, training systems,
+      accelerators and kernels, distributed scaling, performance optimisation,
+      or platform releases that change how AI workloads are run.
+      EXCLUDE consumer/gaming content and pure marketing announcements.
+
+  # --------------------------------------------------------------- vendors --
+  - id: vendors
+    title: Lab & Vendor News
+    blurb: Announcements and engineering writing from the major AI labs.
+    icon: "\U0001F4E2"
+    sources:
+      # Anthropic publishes NO RSS feed — sitemap.xml is the reliable route.
+      - type: sitemap
+        sites:
+          - name: Anthropic
+            url: https://www.anthropic.com/sitemap.xml
+            path_contains: /news/
+            max_pages: 12
+      - type: rss
+        limit_per_feed: 25
+        feeds:
+          - name: OpenAI
+            url: https://openai.com/news/rss.xml
+          - name: Google AI
+            url: https://blog.google/technology/ai/rss/
+          - name: Google DeepMind
+            url: https://deepmind.google/blog/rss.xml
+          - name: Hugging Face
+            url: https://huggingface.co/blog/feed.xml
+          - name: Simon Willison
+            url: https://simonwillison.net/atom/everything/
+    filter:
+      min_score: 3          # lower bar: vendor announcements are inherently notable
+      max_items: 20
+      keywords: []          # no prefilter — these sources are already on-topic
+    criteria: >
+      Announcements, research writing, product and model releases, or safety
+      and policy positions from major AI labs and platforms.
+      Down-rank pure marketing, event promos, and hiring posts.
