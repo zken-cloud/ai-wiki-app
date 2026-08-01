@@ -35,45 +35,22 @@ defaults:
 # which is far more stable than scraping the rendered page.
 # =============================================================================
 benchmarks:
-  # Ordered best-first. SWE-bench bash-only is the freshest coding board with
-  # current frontier models; Verified is the most-cited but lags; Aider is the
-  # only multi-language signal here but is badly out of date.
-  - id: swebench-bash-only
+  # Coding. SWE-bench (Verified 229d, bash-only 156d) and Aider Polyglot (302d)
+  # were removed as out of date — see git history to restore them. SWE-rebench
+  # regenerates its tasks from new PRs, so it stays within days of frontier
+  # releases and also covers Go/Java/Rust, which SWE-bench does not.
+  - id: swe-rebench
     group: 💻 Coding
-    title: SWE-bench (bash-only)
+    title: SWE-rebench
     blurb: >-
-      Real GitHub issues resolved with only shell access — the freshest coding
-      board, and the only one reporting cost per instance. Python repos.
-    parser: swebench_bash_only
-    url: https://github.com/SWE-bench/experiments
-    source_url: https://www.swebench.com/
-    scan: 25
-    top: 12
-
-  - id: swebench-verified
-    group: 💻 Coding
-    title: SWE-bench Verified
-    blurb: >-
-      The most-cited coding benchmark: 500 human-validated GitHub issues.
-      Python repos only.
-    parser: swebench_verified
-    url: https://github.com/SWE-bench/experiments
-    source_url: https://www.swebench.com/
-    split: verified
-    total_instances: 500
-    scan: 25
-    top: 12
-
-  - id: aider-polyglot
-    group: 💻 Coding
-    title: Aider Polyglot
-    blurb: >-
-      The only multi-language board here (C++, Go, Java, JS, Python, Rust) —
-      kept for that reason despite being badly out of date.
-    parser: aider_polyglot
-    url: https://raw.githubusercontent.com/Aider-AI/aider/main/aider/website/_data/polyglot_leaderboard.yml
-    source_url: https://aider.chat/docs/leaderboards/
-    top: 10
+      Continuously refreshed SWE-bench-style tasks drawn from new pull requests,
+      so it is contamination-resistant and tracks frontier models within days.
+      Covers Python, Go, Java and Rust; reports cost per instance.
+    parser: swe_rebench
+    url: https://swe-rebench.com/
+    source_url: https://swe-rebench.com/
+    language: all
+    top: 15
 
   - id: cybergym
     group: 🛡️ Cybersecurity

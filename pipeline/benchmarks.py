@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import concurrent.futures as cf
 import datetime as dt
+import json
+import re
 import logging
 from typing import Any, Callable
 
@@ -267,7 +269,71 @@ def swebench_bash_only(cfg: dict) -> dict:
     }
 
 
+def swe_rebench(cfg: dict) -> dict:
+    """SWE-rebench — continuously refreshed SWE-bench-style tasks.
+
+    The only *current* coding board found: tasks are regenerated from new PRs,
+    so it tracks frontier models within days rather than months, and it breaks
+    down by language (all/python/go/java/rust).
+
+    FRAGILITY: swe-rebench.com is a Next.js app with no public API, so the
+    payload is recovered from the streamed `self.__next_f` flight chunks. That
+    is an internal format and may change without notice — if it does, this
+    parser raises and the board renders as "unavailable" rather than showing
+    wrong numbers. Re-check the extraction if that happens.
+    """
+    html = _get(cfg["url"]).text
+    chunks = re.findall(r'self\.__next_f\.push\(\[1,\s*"((?:[^"\\]|\\.)*)"\]\)', html)
+    if not chunks:
+        raise ValueError("no __next_f chunks — page format changed")
+    blob = "".join(json.loads('"' + c + '"') for c in chunks)
+
+    i = blob.find('"rangeStats"')
+    start = blob.rfind("[{", 0, i)
+    if i < 0 or start < 0:
+        raise ValueError("rangeStats array not found — page format changed")
+    entries, _ = json.JSONDecoder().raw_decode(blob[start:])
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("decoded payload is not a model list")
+
+    lang = cfg.get("language", "all")
+
+    def widest(it: dict) -> dict | None:
+        buckets = (it.get("rangeStats") or {}).get(lang) or {}
+        if not buckets:
+            return None
+        try:  # bucket keys are "<from_ms>:<to_ms>"; the widest is the overall figure
+            key = max(buckets, key=lambda k: int(k.split(":")[1]) - int(k.split(":")[0]))
+        except (ValueError, IndexError):
+            return None
+        return buckets[key]
+
+    rows = []
+    for it in entries:
+        st = widest(it)
+        if not st or st.get("resolvedRate") is None:
+            continue
+        cost = st.get("instanceCosts") or 0
+        rows.append([
+            str(it.get("modelName") or it.get("modelId") or "—")[:46],
+            (it.get("meta") or {}).get("developer", "—"),
+            f"{st['resolvedRate']:.1f}%",
+            f"${cost:.2f}" if cost else "—",
+            (it.get("release") or {}).get("date", "—"),
+        ])
+    rows.sort(key=lambda x: _sortkey(x[2]), reverse=True)
+    newest = max((r[4] for r in rows if str(r[4])[:4].isdigit()), default="")
+    return {
+        "columns": ["Model", "Lab", "Resolved", "$/instance", "Model released"],
+        "rows": rows[: cfg.get("top", 15)],
+        "note": f"{len(rows)} models · language split: {lang} · newest model {newest or '?'}",
+        "newest": newest,
+        "stale": _staleness(newest),
+    }
+
+
 PARSERS: dict[str, Callable[[dict], dict]] = {
+    "swe_rebench": swe_rebench,
     "swebench_verified": swebench_verified,
     "swebench_bash_only": swebench_bash_only,
     "cybergym": cybergym,
