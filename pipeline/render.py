@@ -185,7 +185,7 @@ def daily_index(wiki: Path) -> None:
 
 
 def export_json(wiki: Path, date: str, by_cat: dict[str, list[dict]]) -> None:
-    """Machine-readable export, for anything that wants the data outside the site."""
+    """Machine-readable export, and the recovery source for `load_existing`."""
     path = wiki / "data" / "items" / f"{date}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -194,6 +194,7 @@ def export_json(wiki: Path, date: str, by_cat: dict[str, list[dict]]) -> None:
         "categories": {
             cat: [
                 {
+                    "uid": it.get("uid", ""),
                     "title": it["title"], "url": it["url"], "source": it["source"],
                     "published": it.get("published", ""), "score": it.get("_score"),
                     "summary": it.get("_summary", {}), "extra": it.get("extra", {}),
@@ -204,6 +205,66 @@ def export_json(wiki: Path, date: str, by_cat: dict[str, list[dict]]) -> None:
         },
     }
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+def load_existing(wiki: Path, date: str) -> dict[str, list[dict]]:
+    """Re-hydrate items already published for `date` from the JSON export.
+
+    Without this, a second run on the same date would rewrite that date's pages
+    using only the items the dedupe ledger considers *new* — silently deleting
+    everything published earlier that day.
+    """
+    path = wiki / "data" / "items" / f"{date}.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        log.error("cannot read %s (%s); treating as empty", path, e)
+        return {}
+
+    out: dict[str, list[dict]] = {}
+    for cat, rows in (data.get("categories") or {}).items():
+        out[cat] = [
+            {
+                "uid": r.get("uid", ""),
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "source": r.get("source", ""),
+                "published": r.get("published", ""),
+                "body": "",
+                "category": cat,
+                "_score": r.get("score"),
+                "_summary": r.get("summary") or {},
+                "extra": r.get("extra") or {},
+            }
+            for r in rows if r.get("title")
+        ]
+    return out
+
+
+def merge_items(existing: list[dict], fresh: list[dict]) -> list[dict]:
+    """Union of already-published and newly-selected items, newest score first.
+
+    De-duplicated on URL (stable across runs and present in the export).
+    """
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for it in [*existing, *fresh]:
+        key = it.get("url") or it.get("uid") or it.get("title", "")
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(it)
+    merged.sort(
+        key=lambda it: (
+            it.get("_score") or 0,
+            (it.get("extra") or {}).get("upvotes", 0),
+            it.get("published", ""),
+        ),
+        reverse=True,
+    )
+    return merged
 
 
 def rebuild_indexes(wiki: Path, categories: list[dict]) -> None:

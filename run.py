@@ -40,6 +40,13 @@ def build_day(
     by_cat: dict[str, list[dict]] = {}
     counts: dict[str, int] = {}
 
+    # Anything already published for this date. Re-running a date must ADD to
+    # its pages, never replace them with just the newly-discovered items.
+    existing = {} if dry_run else render.load_existing(wiki, date)
+    if existing:
+        log.info("%s: %d item(s) already published, will merge",
+                 date, sum(len(v) for v in existing.values()))
+
     for cat in categories:
         cid = cat["id"]
         sources = cat.get("sources", [])
@@ -51,15 +58,17 @@ def build_day(
         else:
             items = collect_mod.collect(sources, window, cid)
 
+        prior = existing.get(cid, [])
+
         if dedupe:
             items = ledger.filter_new(items)
         if not items:
-            by_cat[cid], counts[cid] = [], 0
+            by_cat[cid], counts[cid] = prior, len(prior)
             continue
 
         selected = enrich.select(items, cat.get("filter", {}), cat.get("criteria", ""), models)
         if not selected:
-            by_cat[cid], counts[cid] = [], 0
+            by_cat[cid], counts[cid] = prior, len(prior)
             continue
 
         if dry_run:
@@ -67,12 +76,16 @@ def build_day(
                 log.info("  [%s] %-56s %s", it.get("_score"), it["title"][:56], it["source"])
         else:
             enrich.summarise(selected, models.get("summarize", "gemini-2.5-flash"), concurrency)
+            selected = render.merge_items(prior, selected)
             render.category_page(wiki, cat, selected, date)
 
         by_cat[cid], counts[cid] = selected, len(selected)
 
     total = sum(counts.values())
     if dry_run or not total:
+        return total
+    if existing and total == sum(len(v) for v in existing.values()):
+        log.info("%s: nothing new, pages left as-is", date)
         return total
 
     titled = {
