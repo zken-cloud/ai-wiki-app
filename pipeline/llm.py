@@ -4,8 +4,10 @@ Auth resolution order (first that works wins):
   1. GOOGLE_APPLICATION_CREDENTIALS / Workload Identity Federation (CI)
   2. Local Application Default Credentials (`gcloud auth application-default login`)
 
-Verified working: gemini-2.5-flash / gemini-2.5-flash-lite / gemini-2.5-pro
-in us-central1.
+Location defaults to `global` (override with GCP_LOCATION).
+Verified working in global: gemini-3.6-flash, gemini-2.5-flash,
+gemini-2.5-flash-lite, gemini-2.5-pro.
+NOTE: gemini-3.6-pro and gemini-3.6-flash-lite do not exist (404 on Vertex).
 """
 
 from __future__ import annotations
@@ -25,11 +27,24 @@ import requests
 log = logging.getLogger(__name__)
 
 PROJECT = os.environ.get("GCP_PROJECT", "zken-genai")
-LOCATION = os.environ.get("GCP_LOCATION", "us-central1")
-ENDPOINT = (
-    "https://{loc}-aiplatform.googleapis.com/v1/projects/{proj}"
-    "/locations/{loc}/publishers/google/models/{model}:generateContent"
-)
+LOCATION = os.environ.get("GCP_LOCATION", "global")
+
+
+def _endpoint(model: str) -> str:
+    """Build the generateContent URL for the configured location.
+
+    The `global` location does NOT use a region-prefixed host: it is
+    `aiplatform.googleapis.com`, whereas regional is
+    `us-central1-aiplatform.googleapis.com`. Getting this wrong 404s.
+    """
+    host = (
+        "aiplatform.googleapis.com" if LOCATION == "global"
+        else f"{LOCATION}-aiplatform.googleapis.com"
+    )
+    return (
+        f"https://{host}/v1/projects/{PROJECT}/locations/{LOCATION}"
+        f"/publishers/google/models/{model}:generateContent"
+    )
 
 _creds_lock = threading.Lock()
 _creds = None
@@ -94,7 +109,7 @@ def generate(
 
     Retries on 429/5xx with exponential backoff + jitter.
 
-    `thinking_budget=0` disables Gemini 2.5 thinking. This matters a lot for
+    `thinking_budget=0` disables thinking (supported on 2.5 and 3.6). This matters a lot for
     structured output: thinking tokens are billed against maxOutputTokens, so
     a reasoning-heavy call can exhaust the budget and return JSON truncated
     mid-string. Triage and summarisation don't need thinking; the digest does.
@@ -116,7 +131,7 @@ def generate(
         body["generationConfig"]["responseMimeType"] = "application/json"
         body["generationConfig"]["responseSchema"] = schema
 
-    url = ENDPOINT.format(loc=LOCATION, proj=PROJECT, model=model)
+    url = _endpoint(model)
     last = ""
     for attempt in range(retries):
         try:

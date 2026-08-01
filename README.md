@@ -83,8 +83,17 @@ be selected; it skips summaries, the digest, and all file writes.
   Security, Meta Engineering) post weekly; a 3-day window returned zero items
   from them. The ledger makes a wide window safe — nothing publishes twice.
 - **Thinking is disabled** (`thinking_budget=0`) on the triage and summary
-  calls. Gemini 2.5 bills thinking against `maxOutputTokens`, which silently
+  calls. Gemini bills thinking against `maxOutputTokens`, which silently
   truncated structured JSON mid-string until this was set.
+- **Models and region.** Summaries run on `gemini-3.6-flash`; triage stays on
+  `gemini-2.5-flash-lite` and the digest on `gemini-2.5-pro`, because
+  `gemini-3.6-pro` and `gemini-3.6-flash-lite` do not exist on Vertex (verified
+  404). Region defaults to `global` via `GCP_LOCATION`. The global location
+  uses the un-prefixed host `aiplatform.googleapis.com`, not
+  `<region>-aiplatform.googleapis.com` — see `_endpoint()` in `pipeline/llm.py`.
+- **Re-running a date merges, never replaces.** Pages are rebuilt from the union
+  of what was already published (re-hydrated from `data/items/<date>.json`) and
+  whatever is newly found.
 - **A failing source never fails the run.** Each adapter is wrapped; a dead
   feed logs an error and the run continues.
 - **CISA is deliberately excluded.** Its WAF rejects any non-browser

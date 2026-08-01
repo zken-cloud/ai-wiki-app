@@ -17,9 +17,14 @@ defaults:
   # returned zero items from them. The seen-ledger makes a wide window safe —
   # nothing is ever published twice.
   window_days: 7
+  # Region is set by GCP_LOCATION (default: global).
+  # NOTE: gemini-3.6-pro and gemini-3.6-flash-lite do not exist — verified 404
+  # on Vertex. So triage stays on 2.5-flash-lite (cheapest bulk tier) and the
+  # digest stays on 2.5-pro (better narrative synthesis). Both are available in
+  # global. Change either line if you want everything on one model.
   models:
     score: gemini-2.5-flash-lite   # cheapest — bulk relevance triage
-    summarize: gemini-2.5-flash    # per-item summaries
+    summarize: gemini-3.6-flash    # per-item summaries
     digest: gemini-2.5-pro         # one cross-category daily digest
   concurrency: 6
 

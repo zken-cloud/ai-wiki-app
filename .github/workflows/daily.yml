@@ -49,6 +49,7 @@ jobs:
         working-directory: app
         env:
           GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+          GCP_LOCATION: ${{ vars.GCP_LOCATION || 'global' }}
         run: python run.py --check
 
       # Only needed when we intend to write. Skipping it on a dry run means
@@ -69,6 +70,7 @@ jobs:
         working-directory: app
         env:
           GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+          GCP_LOCATION: ${{ vars.GCP_LOCATION || 'global' }}
         run: |
           ARGS="--wiki ../wiki"
           if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
