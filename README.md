@@ -59,9 +59,20 @@ be selected; it skips summaries, the digest, and all file writes.
    Workload Identity Federation — no service-account key is ever stored.
 2. Set the repo variables it prints (`GCP_WIF_PROVIDER`, `GCP_SERVICE_ACCOUNT`,
    `GCP_PROJECT`).
-3. Set one secret, `WIKI_TOKEN`: a fine-grained PAT with **Contents: Read and
-   write** on `zken-cloud/ai-wiki`. This is the only long-lived credential, and
-   it exists solely because cross-repo pushes have no OIDC equivalent.
+3. Set one secret, `WIKI_DEPLOY_KEY`: the private half of an SSH deploy key
+   whose public half is registered **write-enabled on `zken-cloud/ai-wiki`**.
+   Cross-repo pushes have no OIDC equivalent, so this is the one stored
+   credential — a deploy key is used rather than a PAT because it grants write
+   to exactly one repo and has no reach over the account.
+
+   To rotate it:
+   ```bash
+   ssh-keygen -t ed25519 -N "" -C "ai-wiki-app CI" -f /tmp/k
+   gh api -X POST repos/zken-cloud/ai-wiki/keys -f title="ai-wiki-app CI" \
+     -f key="$(cat /tmp/k.pub)" -F read_only=false
+   gh secret set WIKI_DEPLOY_KEY -R zken-cloud/ai-wiki-app < /tmp/k
+   rm /tmp/k /tmp/k.pub          # then delete the old key from the repo's Deploy keys
+   ```
 
 ## Operational notes
 

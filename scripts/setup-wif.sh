@@ -86,8 +86,11 @@ Done. Set these on the ai-wiki-app repo:
 
   gh variable set GCP_PROJECT         -R ${GITHUB_REPO} --body "${PROJECT_ID}"
 
-Still required (cross-repo push, no OIDC equivalent):
-  gh secret set WIKI_TOKEN -R ${GITHUB_REPO}
-    -> a fine-grained PAT with Contents: Read and write on zken-cloud/ai-wiki
+Still required (cross-repo push, no OIDC equivalent) -- SSH deploy key:
+  ssh-keygen -t ed25519 -N "" -C "ai-wiki-app CI" -f /tmp/k
+  gh api -X POST repos/zken-cloud/ai-wiki/keys -f title="ai-wiki-app CI" \\
+    -f key="\$(cat /tmp/k.pub)" -F read_only=false
+  gh secret set WIKI_DEPLOY_KEY -R ${GITHUB_REPO} < /tmp/k
+  rm /tmp/k /tmp/k.pub
 ================================================================
 EOF

@@ -53,12 +53,16 @@ jobs:
 
       # Only needed when we intend to write. Skipping it on a dry run means
       # WIF can be validated end-to-end without a cross-repo push credential.
+      # Uses an SSH deploy key, not a PAT: it grants write to THIS ONE repo and
+      # nothing else, has no account-wide reach, and never expires.
+      # checkout@v4's `ssh-key` also configures the remote, so `git push` below
+      # authenticates with the same key.
       - name: Checkout wiki content
         if: ${{ inputs.dry_run != true }}
         uses: actions/checkout@v4
         with:
           repository: zken-cloud/ai-wiki
-          token: ${{ secrets.WIKI_TOKEN }}
+          ssh-key: ${{ secrets.WIKI_DEPLOY_KEY }}
           path: wiki
 
       - name: Run pipeline
