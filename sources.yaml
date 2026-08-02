@@ -101,7 +101,12 @@ categories:
     filter:
       # Curated (HF-upvoted) items bypass LLM scoring entirely — saves tokens.
       always_keep_curated: true
-      min_score: 4
+      # 3, not 4: the threshold was tuned against gemini-2.5-flash-lite, and
+      # 3.6-flash grades this rubric about one point stricter on the same items
+      # (measured: on an identical 30-paper pool, lite scored 21 at >=4 where
+      # 3.6-flash scored 17 at >=4 and 23 at >=3). Keeping 4 was an accidental
+      # tightening, not a deliberate one.
+      min_score: 3
       max_items: 25
       # Without this quota the curated tier (pinned to score 5) eats all 25
       # slots and the arXiv recall tier never appears. 15/10 split.

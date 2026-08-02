@@ -295,6 +295,7 @@ def rebuild_indexes(wiki: Path, categories: list[dict]) -> None:
     for cat in categories:
         category_index(wiki, cat)
     daily_index(wiki)
+    signal_index(wiki)
     if not (wiki / "docs" / "index.md").exists():
         home(wiki, categories)
 
@@ -309,12 +310,13 @@ TAG_ICON = {
 }
 
 
-def signal_page(wiki: Path, date: str, sig: dict, counts: dict[str, int],
-                categories: list[dict]) -> None:
-    """Write docs/index.md as a one-screen brief.
+def _signal_brief(date: str, sig: dict, counts: dict[str, int],
+                  prefix: str = "") -> list[str]:
+    """The brief itself: subtitle, picks, papers. Shared by today's page and
+    its dated archive copy, so the two can never drift apart.
 
-    This is what opens when the PWA is launched, so it must stay short: the
-    full per-category lists live one tap away.
+    `prefix` is prepended to intra-wiki links: the archive lives one directory
+    down, so it needs "../" where the home page needs "".
     """
     picks = sig.get("picks") or []
     papers = sig.get("papers") or []
@@ -324,12 +326,7 @@ def signal_page(wiki: Path, date: str, sig: dict, counts: dict[str, int],
     if papers:
         counted += f" · {len(papers)} papers"
 
-    out = [
-        "# Today's Signal",
-        "",
-        f"<small>{date} · {counted} · {total} items reviewed</small>",
-        "",
-    ]
+    out = [f"<small>{date} · {counted} · {total} items reviewed</small>", ""]
 
     if not picks and not papers:
         out += [
@@ -364,10 +361,23 @@ def signal_page(wiki: Path, date: str, sig: dict, counts: dict[str, int],
                 "",
             ]
         out += [
-            f"<small>[All {counts.get('papers', 0)} papers from today →]"
-            f"(papers/{date}.md)</small>",
+            f"<small>[All {counts.get('papers', 0)} papers from that day →]"
+            f"({prefix}papers/{date}.md)</small>",
             "",
         ]
+    return out
+
+
+def signal_page(wiki: Path, date: str, sig: dict, counts: dict[str, int],
+                categories: list[dict]) -> None:
+    """Write docs/index.md as a one-screen brief, plus a dated archive copy.
+
+    index.md is what opens when the PWA is launched, so it must stay short:
+    the full per-category lists live one tap away. The archive copy under
+    docs/signal/ is what makes yesterday's brief still readable tomorrow —
+    index.md is overwritten every run and would otherwise be lost.
+    """
+    out = ["# Today's Signal", ""] + _signal_brief(date, sig, counts)
 
     out += ["---", "", "## Everything else", ""]
     for c in categories:
@@ -380,6 +390,7 @@ def signal_page(wiki: Path, date: str, sig: dict, counts: dict[str, int],
         f"- 🏟️ **[Benchmark Arena](benchmarks.md)** — <small>where models stand on coding & cyber evals</small>",
         f"- 📰 **[Full briefing for {date}](daily/{date}.md)** — <small>the long version</small>",
         "- 🗂️ **[All briefings](daily/index.md)**",
+        "- 🕘 **[Past signals](signal/index.md)** — <small>every previous day's brief</small>",
         "",
         "---",
         "",
@@ -388,6 +399,46 @@ def signal_page(wiki: Path, date: str, sig: dict, counts: dict[str, int],
         "",
     ]
     (wiki / "docs" / "index.md").write_text("\n".join(out))
+    signal_archive_page(wiki, date, sig, counts)
+
+
+def signal_archive_page(wiki: Path, date: str, sig: dict,
+                        counts: dict[str, int]) -> None:
+    """Freeze one day's brief at docs/signal/<date>.md."""
+    out = [f"# Signal — {date}", ""] + _signal_brief(date, sig, counts, prefix="../")
+    out += [
+        "---",
+        "",
+        f"<small>[Full briefing for {date}](../daily/{date}.md) · "
+        "[All past signals](index.md) · [Today](../index.md)</small>",
+        "",
+    ]
+    d = wiki / "docs" / "signal"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{date}.md").write_text("\n".join(out))
+
+
+def signal_index(wiki: Path) -> None:
+    dates = _dates_in(wiki / "docs" / "signal")
+    lines = [
+        "# 🕘 Past Signals",
+        "",
+        "*Each day's one-screen brief, kept so you can catch up on days you "
+        "missed.*",
+        "",
+    ]
+    if dates:
+        by_month: dict[str, list[str]] = {}
+        for d in dates:
+            by_month.setdefault(d[:7], []).append(d)
+        for month, ds in by_month.items():
+            label = dt.date.fromisoformat(f"{month}-01").strftime("%B %Y")
+            lines += [f"**{label}**", ""]
+            lines += [f"- [{d}]({d}.md)" for d in ds]
+            lines += [""]
+    else:
+        lines += ["_Nothing yet — the first run populates this page._", ""]
+    (wiki / "docs" / "signal" / "index.md").write_text("\n".join(lines))
 
 
 # --------------------------------------------------------------------------- #
