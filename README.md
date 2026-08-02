@@ -66,14 +66,14 @@ flowchart TD
     B -->|new| C["keyword prefilter<br/><b>free</b>"]
     C --> D{"HF-curated?<br/>community upvotes"}
     D -->|yes| F["pinned score 5<br/><b>free</b> — no model call"]
-    D -->|no| E["score_items()<br/>gemini-2.5-flash-lite<br/>batched, cheapest tier"]
+    D -->|no| E["score_items()<br/>gemini-3.6-flash<br/>batched, highest volume"]
     E --> G["select()<br/>min_score · max_items · max_curated"]
     F --> G
     G --> H["summarise()<br/>gemini-3.6-flash<br/>1 call per item, 6 concurrent"]
     H --> I["merge_items()<br/>union with already-published"]
-    I --> J["digest()<br/>gemini-2.5-pro · 1 per day"]
-    I --> K["signal()<br/>gemini-2.5-pro · picks + papers"]
-    I --> L["extract_releases()<br/>gemini-2.5-flash-lite"]
+    I --> J["digest()<br/>gemini-3.6-flash · 1 per day"]
+    I --> K["signal()<br/>gemini-3.6-flash · picks + papers"]
+    I --> L["extract_releases()<br/>gemini-3.6-flash"]
     J --> M["render.* → Markdown + JSON"]
     K --> M
     L --> M
@@ -267,11 +267,19 @@ be selected; it skips summaries, the digest, and all file writes.
 - **Thinking is disabled** (`thinking_budget=0`) on the triage and summary
   calls. Gemini bills thinking against `maxOutputTokens`, which silently
   truncated structured JSON mid-string until this was set.
-- **Models and region.** Summaries run on `gemini-3.6-flash`; triage stays on
-  `gemini-2.5-flash-lite` and the digest on `gemini-2.5-pro`, because
+- **One model everywhere: `gemini-3.6-flash`.** Triage, summaries, digest and
+  signal all run on it, by choice — simpler to reason about and to bill.
   `gemini-3.6-pro` and `gemini-3.6-flash-lite` do not exist on Vertex (verified
-  404). Region defaults to `global` via `GCP_LOCATION`. The global location
-  uses the un-prefixed host `aiplatform.googleapis.com`, not
+  404), so 3.6-flash is the only 3.6 tier. The trade-off is that triage no
+  longer runs on the cheapest tier; set `score: gemini-2.5-flash-lite` in
+  `sources.yaml` if bulk triage cost ever outweighs uniformity.
+- **3.6-flash thinks by default.** Any call with a tight `max_tokens` and no
+  `thinking_budget=0` returns `finishReason=MAX_TOKENS` with an *empty body* —
+  thinking consumed the whole budget. This bit the 16-token `--check` probe the
+  moment it moved off Flash-Lite. Digest and signal deliberately leave thinking
+  on, and have the headroom (16k / 8k) to afford it.
+- **Region** defaults to `global` via `GCP_LOCATION`. The global location uses
+  the un-prefixed host `aiplatform.googleapis.com`, not
   `<region>-aiplatform.googleapis.com` — see `_endpoint()` in `pipeline/llm.py`.
 - **Re-running a date merges, never replaces.** Pages are rebuilt from the union
   of what was already published (re-hydrated from `data/items/<date>.json`) and
@@ -284,6 +292,11 @@ be selected; it skips summaries, the digest, and all file writes.
 
 ## Cost
 
-Per day, roughly: ~15 batched triage calls on Flash-Lite, ~65 summaries on
-Flash, one digest on Pro. That is a few hundred thousand tokens/day, dominated
-by cheap models. GitHub Actions and Pages are free at this volume.
+Per day, roughly: ~15 batched triage calls, ~65 per-item summaries, one digest
+and one signal brief — all on `gemini-3.6-flash`. A few hundred thousand tokens
+a day on a single mid-tier model. GitHub Actions and Pages are free at this
+volume, so Vertex is the only line item.
+
+Triage is the stage to watch: it sees *every* collected item, not just the ones
+that survive filtering, so it dominates input tokens. The free keyword prefilter
+and the Hugging Face curated-bypass exist to keep that number down.

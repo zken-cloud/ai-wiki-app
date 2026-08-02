@@ -18,15 +18,18 @@ defaults:
   # nothing is ever published twice.
   window_days: 7
   # Region is set by GCP_LOCATION (default: global).
+  # One model for every stage, by choice: simpler to reason about and to bill.
+  # Note this puts triage on Flash rather than Flash-Lite — triage is the
+  # highest-volume call in the pipeline (it sees every item, not just the
+  # survivors), so that is where the cost sits. Set `score` back to
+  # gemini-2.5-flash-lite if bulk triage cost ever matters more than uniformity.
   # NOTE: gemini-3.6-pro and gemini-3.6-flash-lite do not exist — verified 404
-  # on Vertex. So triage stays on 2.5-flash-lite (cheapest bulk tier) and the
-  # digest stays on 2.5-pro (better narrative synthesis). Both are available in
-  # global. Change either line if you want everything on one model.
+  # on Vertex — so 3.6-flash is the only 3.6 tier available.
   models:
-    score: gemini-2.5-flash-lite   # cheapest — bulk relevance triage
+    score: gemini-3.6-flash        # bulk relevance triage
     summarize: gemini-3.6-flash    # per-item summaries
-    digest: gemini-2.5-pro         # one cross-category daily digest
-    signal: gemini-2.5-pro         # picks the day's top items for the front page
+    digest: gemini-3.6-flash       # one cross-category daily digest
+    signal: gemini-3.6-flash       # picks the day's top items for the front page
   concurrency: 6
 
 # =============================================================================

@@ -77,7 +77,7 @@ def build_day(
             for it in selected:
                 log.info("  [%s] %-56s %s", it.get("_score"), it["title"][:56], it["source"])
         else:
-            enrich.summarise(selected, models.get("summarize", "gemini-2.5-flash"), concurrency)
+            enrich.summarise(selected, models.get("summarize", "gemini-3.6-flash"), concurrency)
             selected = render.merge_items(prior, selected)
             render.category_page(wiki, cat, selected, date)
 
@@ -100,7 +100,7 @@ def build_day(
         for cid, items in by_cat.items() if items
     }
     if not nothing_new:
-        digest_md = enrich.digest(titled, date, models.get("digest", "gemini-2.5-pro"))
+        digest_md = enrich.digest(titled, date, models.get("digest", "gemini-3.6-flash"))
         render.daily_page(wiki, date, digest_md, counts)
         render.export_json(wiki, date, by_cat)
 

@@ -97,7 +97,7 @@ class LLMError(RuntimeError):
 def generate(
     prompt: str,
     *,
-    model: str = "gemini-2.5-flash",
+    model: str = "gemini-3.6-flash",
     system: str | None = None,
     schema: dict[str, Any] | None = None,
     max_tokens: int = 2048,
@@ -186,7 +186,13 @@ def _extract(payload: dict[str, Any], schema: dict[str, Any] | None) -> Any:
 def healthcheck() -> bool:
     """Cheap connectivity probe used by `run.py --check`."""
     try:
-        out = generate("Reply with exactly: OK", model="gemini-2.5-flash-lite", max_tokens=16)
+        # Checks the model the pipeline actually uses, so --check catches a
+        # bad model id as well as bad credentials.
+        # thinking_budget=0 is REQUIRED here: 3.6-flash thinks by default and
+        # would spend the whole 16-token budget on it, returning MAX_TOKENS
+        # with an empty body — a false failure.
+        out = generate("Reply with exactly: OK", model="gemini-3.6-flash",
+                       max_tokens=16, thinking_budget=0)
         return "OK" in str(out).upper()
     except Exception as e:  # noqa: BLE001 - surfaced to the operator
         log.error("Vertex healthcheck failed: %s", e)
