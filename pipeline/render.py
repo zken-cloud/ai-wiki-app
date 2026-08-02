@@ -317,17 +317,21 @@ def signal_page(wiki: Path, date: str, sig: dict, counts: dict[str, int],
     full per-category lists live one tap away.
     """
     picks = sig.get("picks") or []
+    papers = sig.get("papers") or []
     total = sum(counts.values())
+
+    counted = f"{len(picks)} things worth knowing"
+    if papers:
+        counted += f" · {len(papers)} papers"
 
     out = [
         "# Today's Signal",
         "",
-        f"<small>{date} · {len(picks)} things worth knowing · "
-        f"{total} items reviewed</small>",
+        f"<small>{date} · {counted} · {total} items reviewed</small>",
         "",
     ]
 
-    if not picks:
+    if not picks and not papers:
         out += [
             '!!! info "Quiet day"',
             "    Nothing cleared the bar today. That is a real signal too —",
@@ -345,6 +349,25 @@ def signal_page(wiki: Path, date: str, sig: dict, counts: dict[str, int],
                 f"<small>{_esc(p.get('source',''))} · `{p.get('tag','')}`</small>",
                 "",
             ]
+
+    # Research sits below the news and stays short. It is a separate list so a
+    # busy day cannot crowd it out, and a quiet one cannot pad it.
+    if papers:
+        out += ["---", "", "## 📄 Papers worth reading", ""]
+        for p in papers:
+            out += [
+                f"**[{_esc(p['headline'])}]({p['url']})**",
+                "",
+                f"{p.get('why','')}",
+                "",
+                f"<small>{_esc(p.get('source',''))}</small>",
+                "",
+            ]
+        out += [
+            f"<small>[All {counts.get('papers', 0)} papers from today →]"
+            f"(papers/{date}.md)</small>",
+            "",
+        ]
 
     out += ["---", "", "## Everything else", ""]
     for c in categories:

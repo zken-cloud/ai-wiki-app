@@ -263,9 +263,24 @@ SIGNAL_SCHEMA = {
                 "required": ["i", "headline", "why", "tag"],
             },
         },
+        # Papers get their own list rather than competing for `picks` slots.
+        # When they shared the list they were never selected once: the prompt
+        # ranks research last, and a normal news day fills every slot first.
+        "papers": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "i": {"type": "INTEGER"},
+                    "headline": {"type": "STRING"},
+                    "why": {"type": "STRING"},
+                },
+                "required": ["i", "headline", "why"],
+            },
+        },
         "quiet_day": {"type": "BOOLEAN"},
     },
-    "required": ["picks", "quiet_day"],
+    "required": ["picks", "papers", "quiet_day"],
 }
 
 SIGNAL_SYSTEM = (
@@ -276,15 +291,17 @@ SIGNAL_SYSTEM = (
 )
 
 
-def signal(all_items: list[dict], date: str, model: str, limit: int = 8) -> dict:
+def signal(all_items: list[dict], date: str, model: str, limit: int = 8,
+           paper_limit: int = 3) -> dict:
     """Rank the whole day and return only what is worth a phone screen.
 
-    Deliberately biased toward model releases, lab/vendor announcements and AI
-    security; research is included only when it is genuinely notable, because
-    that is what the reader asked to be focused on.
+    Two lists, deliberately separate. `picks` is biased toward model releases,
+    lab/vendor announcements and AI security — what the reader asked to be
+    focused on. `papers` is a small fixed-size digest of the day's research,
+    which would otherwise never survive the ranking.
     """
     if not all_items:
-        return {"picks": [], "quiet_day": True}
+        return {"picks": [], "papers": [], "quiet_day": True}
 
     listing = "\n".join(
         f"[{n}] ({it.get('category')}) {it['title']}\n"
@@ -307,7 +324,16 @@ def signal(all_items: list[dict], date: str, model: str, limit: int = 8) -> dict
         "  why      - ONE sentence on why it matters to this reader\n"
         "  tag      - one of model|vendor|security|infra|research\n\n"
         "Fewer, better picks beat a full list. If the day is genuinely quiet, "
-        "return fewer items and set quiet_day true. Never invent items."
+        "return fewer items and set quiet_day true. Never invent items.\n\n"
+        f"SEPARATELY, choose AT MOST {paper_limit} items from the (papers) "
+        "category for a short research digest, in priority order. These are "
+        "judged on their own merits, NOT against the news above. Prefer work "
+        "that changes how models are built, trained, served, evaluated or "
+        "attacked, over incremental benchmark gains and narrow applications. "
+        "Give i, headline (max 12 words) and why (one sentence, plain language "
+        "— what is new and why it matters). Do not repeat anything already "
+        "selected above. If nothing is worth a busy reader's time, return an "
+        "empty list."
     )
     try:
         out = llm.generate(
@@ -316,24 +342,43 @@ def signal(all_items: list[dict], date: str, model: str, limit: int = 8) -> dict
         )
     except Exception as e:  # noqa: BLE001
         log.error("signal failed: %s", e)
-        return {"picks": [], "quiet_day": False, "_degraded": True}
+        return {"picks": [], "papers": [], "quiet_day": False, "_degraded": True}
 
-    picks = []
-    for p in (out.get("picks") or [])[:limit]:
-        try:
-            it = all_items[int(p["i"])]
-        except (KeyError, ValueError, IndexError):
-            continue
-        picks.append({
-            "headline": p.get("headline") or it["title"],
-            "why": p.get("why", ""),
-            "tag": p.get("tag", "research"),
-            "title": it["title"],
-            "url": it["url"],
-            "source": it["source"],
-            "category": it.get("category", ""),
-        })
-    return {"picks": picks, "quiet_day": bool(out.get("quiet_day")) and not picks}
+    def _resolve(raw: list, cap: int, tag: str | None) -> list[dict]:
+        rows, used = [], set()
+        for p in (raw or [])[:cap]:
+            try:
+                n = int(p["i"])
+                it = all_items[n]
+            except (KeyError, ValueError, IndexError):
+                continue
+            if n in used:          # model occasionally repeats an index
+                continue
+            used.add(n)
+            rows.append({
+                "headline": p.get("headline") or it["title"],
+                "why": p.get("why", ""),
+                "tag": tag or p.get("tag", "research"),
+                "title": it["title"],
+                "url": it["url"],
+                "source": it["source"],
+                "category": it.get("category", ""),
+            })
+        return rows
+
+    picks = _resolve(out.get("picks"), limit, None)
+    chosen = {p["url"] for p in picks}
+    papers = [
+        p for p in _resolve(out.get("papers"), paper_limit, "research")
+        # Belt-and-braces: the prompt says do not repeat, but a duplicate
+        # across the two lists would look like a bug on the page.
+        if p["url"] not in chosen and p["category"] == "papers"
+    ]
+    return {
+        "picks": picks,
+        "papers": papers,
+        "quiet_day": bool(out.get("quiet_day")) and not picks and not papers,
+    }
 
 
 # --------------------------------------------------------------------------- #
