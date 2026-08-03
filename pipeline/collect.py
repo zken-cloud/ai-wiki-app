@@ -26,16 +26,22 @@ UA = {"User-Agent": "ai-wiki/1.0 (+https://github.com/zken-cloud/ai-wiki)"}
 TIMEOUT = 45
 SM_NS = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
 
-# arXiv asks API clients to leave ~3s between requests. A 30-day backfill makes
-# 4 requests per day; without pacing arXiv returns 429s and whole days silently
-# lose their paper coverage. Serialise every arXiv call behind a min-interval.
-ARXIV_MIN_INTERVAL = 3.0
+# arXiv asks API clients to leave ~3s between requests, but 3s is not enough
+# for a backfill: 30 days x 4 categories x max_results=60 is a sustained burst,
+# and arXiv 429s partway through — whole days then silently lose their paper
+# coverage, which is worse than a slow run. 8s survives a full 30-day backfill.
+# A normal daily run makes 4 calls, so this costs it ~30s.
+ARXIV_MIN_INTERVAL = 8.0
 _arxiv_lock = threading.Lock()
 _arxiv_last = 0.0
 
 
-def _arxiv_get(params: dict, attempts: int = 4) -> requests.Response:
-    """Rate-limited, retrying GET against the arXiv API."""
+def _arxiv_get(params: dict, attempts: int = 6) -> requests.Response:
+    """Rate-limited, retrying GET against the arXiv API.
+
+    Six attempts, not four: a 429 partway through a backfill is recoverable if
+    we simply wait longer, and losing a day's papers is not.
+    """
     global _arxiv_last
     last_err = ""
     for attempt in range(attempts):
@@ -55,9 +61,14 @@ def _arxiv_get(params: dict, attempts: int = 4) -> requests.Response:
                 _arxiv_last = time.monotonic()
         if r is not None and r.status_code == 200:
             return r
+        backoff = ARXIV_MIN_INTERVAL * (2 ** attempt) + random.uniform(0, 1.0)
         if r is not None:
             last_err = f"HTTP {r.status_code}"
-        backoff = ARXIV_MIN_INTERVAL * (2 ** attempt) + random.uniform(0, 1.0)
+            # If arXiv tells us how long to wait, believe it over our guess.
+            try:
+                backoff = max(backoff, float(r.headers.get("Retry-After", 0)))
+            except ValueError:
+                pass
         log.warning("arxiv retry %d/%d in %.1fs (%s)", attempt + 1, attempts, backoff, last_err)
         time.sleep(backoff)
     raise RuntimeError(f"arxiv unavailable after {attempts} attempts: {last_err}")
