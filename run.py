@@ -21,7 +21,7 @@ import yaml
 
 from pipeline import collect as collect_mod
 from pipeline import benchmarks as bench_mod
-from pipeline import enrich, llm, render, state
+from pipeline import enrich, feeds, llm, render, state
 
 log = logging.getLogger("ai-wiki")
 
@@ -219,6 +219,7 @@ def main() -> int:
         render.export_benchmarks(wiki, boards)
 
     render.rebuild_indexes(wiki, cfg["categories"])
+    feeds.build_all(wiki, cfg["categories"])
     log.info("done: %s", wiki)
     return 0
 
