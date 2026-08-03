@@ -95,8 +95,12 @@ categories:
       - type: hf_daily
         limit: 40
       # Tier 2: recall — catches what did not trend on HF.
+      # cs.CR lives under `security`, not here: it is the only reliable daily
+      # source of AI-security content, and that category was averaging 0.3
+      # items/day without it. One home per paper — the dedupe ledger is keyed
+      # on uid globally, so listing it in both would be ambiguous.
       - type: arxiv
-        categories: [cs.AI, cs.LG, cs.CL, cs.CR]
+        categories: [cs.AI, cs.LG, cs.CL]
         max_results_per_category: 60
     filter:
       # Curated (HF-upvoted) items bypass LLM scoring entirely — saves tokens.
@@ -166,6 +170,23 @@ categories:
             url: https://unit42.paloaltonetworks.com/feed/
           - name: Google Project Zero
             url: https://googleprojectzero.blogspot.com/feeds/posts/default
+          # Added after this category averaged 0.3 items/day over its first
+          # month: five of the feeds above are general-security blogs that
+          # rarely touch AI, so the filter was correctly discarding almost
+          # everything collected. All verified live before committing.
+          - name: Adversa AI
+            url: https://adversa.ai/feed/
+          - name: Schneier on Security
+            url: https://www.schneier.com/feed/atom/
+          - name: OWASP GenAI Security
+            url: https://genai.owasp.org/feed/
+          - name: Cloud Security Alliance
+            url: https://cloudsecurityalliance.org/blog/feed
+      # The workhorse: arXiv cs.CR is the one source that reliably carries
+      # AI-security material every single day. Moved here from `papers`.
+      - type: arxiv
+        categories: [cs.CR]
+        max_results_per_category: 60
           # NOTE: CISA (cisa.gov/cybersecurity-advisories/all.xml) is deliberately
           # omitted. Its WAF 403s any non-browser User-Agent, and its content is
           # overwhelmingly ICS/OT advisories with no AI dimension. Not worth
@@ -188,10 +209,13 @@ categories:
         - inference
         - GPU
     criteria: >
-      Security news that touches AI/ML systems: attacks on or via models,
-      prompt injection, agent and tool-use abuse, model supply-chain issues,
-      AI-assisted threat activity, or defensive guidance for AI deployments.
-      EXCLUDE generic CVEs and ICS advisories with no AI dimension.
+      Security news OR research that touches AI/ML systems: attacks on or via
+      models, prompt injection, agent and tool-use abuse, model supply-chain
+      issues, AI-assisted threat activity, or defensive guidance for AI
+      deployments. arXiv cs.CR papers count when the contribution is about
+      AI/ML systems.
+      EXCLUDE generic CVEs and ICS advisories with no AI dimension, and
+      classical cryptography or network-security work with no AI component.
 
   # ----------------------------------------------------------------- infra --
   - id: infra
@@ -221,7 +245,13 @@ categories:
             path_contains: /20
             max_pages: 6
     filter:
-      min_score: 4
+      # 3 for the same reason as papers: the threshold was set against
+      # 2.5-flash-lite, and 3.6-flash grades about a point stricter. At 4 this
+      # category kept 1 item from 13; at 3 it keeps 5, and the four at 3 are
+      # real infra content (Nemotron 3 Ultra, NeMo Guardrails self-hosting,
+      # task-aware knowledge compression). Security stays at 4 — it clears 22
+      # items at that bar now, so it does not need the help.
+      min_score: 3
       max_items: 15
       keywords:
         - GPU
@@ -241,6 +271,18 @@ categories:
         - memory
         - scaling
         - datacenter
+        # Added after an audit: the prefilter was cutting 35 items to 6 and
+        # dropping real content before the model ever saw it — including a
+        # Google Cloud post literally titled "What's new in AI infrastructure
+        # and orchestration". None of the terms above match that.
+        - infrastructure
+        - orchestration
+        - compute
+        - TPU
+        - deploy
+        - runtime
+        - efficiency
+        - Kubernetes
     criteria: >
       Technical AI-infrastructure content: inference serving, training systems,
       accelerators and kernels, distributed scaling, performance optimisation,
