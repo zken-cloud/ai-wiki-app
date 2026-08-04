@@ -98,6 +98,10 @@ def score_items(items: list[dict], criteria: str, model: str, batch: int = 20) -
         list(ex.map(run_batch, chunks))
 
 
+def _from_arxiv(it: dict) -> bool:
+    return it.get("source", "").startswith("arXiv")
+
+
 def select(items: list[dict], cfg: dict, criteria: str, models: dict) -> list[dict]:
     """Full triage funnel for one category."""
     kept = keyword_prefilter(items, cfg.get("keywords", []))
@@ -122,8 +126,25 @@ def select(items: list[dict], cfg: dict, criteria: str, models: dict) -> list[di
     winners.sort(key=rank, reverse=True)
     cap = cfg.get("max_items", 20)
     max_curated = cfg.get("max_curated")
+    max_arxiv = cfg.get("max_arxiv")
 
-    if max_curated is None:
+    if max_arxiv is not None:
+        # arXiv out-supplies every news feed by an order of magnitude, and the
+        # scorer rates AI-security papers uniformly high (115 of 137 scored 5
+        # in an audit), so without a quota the category becomes an arXiv
+        # listing — measured at 83% papers, with days of 14 papers to 1 news.
+        # Papers take at most max_arxiv slots; the rest are held for news, and
+        # handed back to papers only if news genuinely under-delivers.
+        papers = [it for it in winners if _from_arxiv(it)]
+        news = [it for it in winners if not _from_arxiv(it)]
+        picked = papers[:max_arxiv]
+        picked += news[: max(0, cap - len(picked))]
+        if len(picked) < cap:
+            taken = {id(it) for it in picked}
+            picked += [it for it in papers if id(it) not in taken][: cap - len(picked)]
+        picked.sort(key=rank, reverse=True)
+        capped = picked
+    elif max_curated is None:
         capped = winners[:cap]
     else:
         # Curated items are pinned to score 5, so without a quota they would

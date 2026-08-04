@@ -37,7 +37,13 @@ class Seen:
 
     def mark(self, items: list[dict], date: str) -> None:
         for it in items:
-            self.data.setdefault(it["uid"], date)
+            # Re-hydrated rows can carry a blank uid (older exports did not
+            # store one). Marking those wrote a single "" key, after which
+            # is_new("") is False for every future blank-uid item — they would
+            # all be silently dropped as "already seen".
+            uid = it.get("uid")
+            if uid:
+                self.data.setdefault(uid, date)
 
     def save(self) -> None:
         cutoff = (dt.date.today() - dt.timedelta(days=RETENTION_DAYS)).isoformat()

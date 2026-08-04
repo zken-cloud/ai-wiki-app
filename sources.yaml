@@ -162,8 +162,12 @@ categories:
             url: https://security.googleblog.com/atom.xml
           - name: Microsoft Security Blog
             url: https://www.microsoft.com/en-us/security/blog/feed/
-          - name: NCSC UK
-            url: https://www.ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml
+          # NOTE: NCSC UK (ncsc.gov.uk/api/1/services/v1/report-rss-feed.xml)
+          # was removed. The feed still returns 200 and parses, but its newest
+          # entry is 454 days old — it was costing a fetch every run for
+          # content that never arrives. Google Online Security (103d) and
+          # Project Zero (83d) are kept despite being slow: they do still post,
+          # and when they do it is high signal.
           - name: Trail of Bits
             url: https://blog.trailofbits.com/feed/
           - name: Unit 42
@@ -194,6 +198,10 @@ categories:
     filter:
       min_score: 4
       max_items: 15
+      # At most 10 of the 15 slots may go to arXiv, holding 5 for actual news.
+      # Without this the category ran 83% papers. Unused news slots fall back
+      # to papers, so a quiet news day still fills the page.
+      max_arxiv: 10
       keywords:
         - AI
         - LLM

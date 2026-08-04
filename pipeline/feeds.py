@@ -49,7 +49,8 @@ def _recent_dates(dirpath: Path, days: int = WINDOW_DAYS) -> list[str]:
 
 
 def _entry(title: str, url: str, updated: str, summary: str,
-           source: str = "", categories: list[str] | None = None) -> list[str]:
+           source: str = "", categories: list[str] | None = None,
+           published: str = "") -> list[str]:
     out = [
         "  <entry>",
         f"    <title>{escape(title)}</title>",
@@ -57,6 +58,10 @@ def _entry(title: str, url: str, updated: str, summary: str,
         f"    <id>{escape(url)}</id>",
         f"    <updated>{updated}</updated>",
     ]
+    # <updated> is when the wiki surfaced it (what a reader sorts by);
+    # <published> is the original date, which can be much earlier.
+    if published and published != updated:
+        out.append(f"    <published>{published}</published>")
     for c in categories or []:
         out.append(f"    <category term={quoteattr(c)}/>")
     if source:
@@ -156,10 +161,18 @@ def category_feed(wiki: Path, cat: dict) -> int:
             body = s.get("tldr", "")
             if s.get("why_it_matters"):
                 body = f"{body}<br/><br/><em>Why it matters:</em> {s['why_it_matters']}"
-            ts = _ts(it.get("published") or date)
+            # Order by the date the wiki surfaced the item, NOT by its own
+            # publication date. Hugging Face routinely features papers weeks
+            # after submission (measured: up to 76 days), and arXiv items are
+            # collected over a 7-day window. Sorting by `published` pushed
+            # 86 of 168 recently-surfaced papers below the 100-entry cap, so
+            # half of the newest content never reached the feed at all.
+            ts = _ts(date)
+            orig = it.get("published") or ""
             rows.append((ts, _entry(
                 it.get("title", ""), url, ts,
                 body, it.get("source", ""), s.get("tags") or [],
+                published=_ts(orig[:10]) if len(orig) >= 10 else "",
             )))
     entries, newest = _finalise(rows)
     _feed(

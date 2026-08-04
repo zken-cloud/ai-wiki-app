@@ -49,6 +49,25 @@ def build_day(
         log.info("%s: %d item(s) already published, will merge",
                  date, sum(len(v) for v in existing.values()))
 
+    # Items already taken by an earlier category *in this same run*, or already
+    # published for this date by any category.
+    #
+    # The ledger alone cannot cover this: it is only written at the end of the
+    # day (below), so while the category loop is running every category sees a
+    # ledger that predates the whole run. arXiv papers cross-listed to both
+    # cs.CR and cs.LG were therefore collected by `papers` (via cs.LG) and by
+    # `security` (via cs.CR) and published twice — 25 such duplicates were
+    # found in an audit of the first month.
+    #
+    # Keyed on URL, matching render.merge_items, because URL is stable and
+    # always present while re-hydrated rows can carry a blank uid.
+    def _key(it: dict) -> str:
+        return it.get("url") or it.get("uid") or it.get("title", "")
+
+    claimed: set[str] = {
+        _key(it) for items in existing.values() for it in items
+    }
+
     for cat in categories:
         cid = cat["id"]
         sources = cat.get("sources", [])
@@ -64,6 +83,12 @@ def build_day(
 
         if dedupe:
             items = ledger.filter_new(items)
+        if dedupe and claimed:
+            before = len(items)
+            items = [it for it in items if _key(it) not in claimed]
+            if before != len(items):
+                log.info("cross-category: %d -> %d (claimed earlier this run)",
+                         before, len(items))
         if not items:
             by_cat[cid], counts[cid] = prior, len(prior)
             continue
@@ -72,6 +97,10 @@ def build_day(
         if not selected:
             by_cat[cid], counts[cid] = prior, len(prior)
             continue
+
+        # Claim before summarising, so a later category never pays to
+        # summarise something this one already took.
+        claimed.update(_key(it) for it in selected)
 
         if dry_run:
             for it in selected:
