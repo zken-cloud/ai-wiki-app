@@ -196,7 +196,18 @@ categories:
           # overwhelmingly ICS/OT advisories with no AI dimension. Not worth
           # spoofing a browser for.
     filter:
-      min_score: 4
+      # 3, and only safe because of max_arxiv below: with papers capped
+      # independently, a lower bar can admit more news but never more papers,
+      # and news slots that go unfilled fall back to papers anyway.
+      #
+      # Do not expect much from it. Measured on 2026-08-04 against the 15
+      # ledger-fresh news items: scores were {1:11, 2:2, 4:1, 5:1} — nothing
+      # sat at 3, so this threshold change admitted zero extra items that day.
+      # The constraint is supply, not the bar: 11 of 15 genuinely-new news
+      # items were Microsoft monthly roundups, non-AI malware writeups and
+      # vendor press releases, and the two that mattered already cleared 4.
+      # The lever that would actually help is better AI-security sources.
+      min_score: 3
       max_items: 15
       # At most 10 of the 15 slots may go to arXiv, holding 5 for actual news.
       # Without this the category ran 83% papers. Unused news slots fall back
