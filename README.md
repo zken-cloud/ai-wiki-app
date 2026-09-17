@@ -31,7 +31,7 @@ flowchart LR
         RUN["run.py<br/>orchestrator"]
     end
 
-    subgraph GCP["Google Cloud · project zken-genai"]
+    subgraph GCP["Google Cloud · your project"]
         VX["Vertex AI<br/>Gemini generateContent"]
     end
 
@@ -257,8 +257,9 @@ be selected; it skips summaries, the digest, and all file writes.
 
 ## CI setup
 
-1. Have a project admin run `scripts/setup-wif.sh`. It provisions keyless
-   Workload Identity Federation — no service-account key is ever stored.
+1. Have a project admin run `PROJECT_ID=<PROJECT_ID> scripts/setup-wif.sh`. It
+   provisions keyless Workload Identity Federation — no service-account key is
+   ever stored.
 2. Set the repo variables it prints (`GCP_WIF_PROVIDER`, `GCP_SERVICE_ACCOUNT`,
    `GCP_PROJECT`).
 3. Set one secret, `WIKI_DEPLOY_KEY`: the private half of an SSH deploy key

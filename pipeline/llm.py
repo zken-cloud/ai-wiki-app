@@ -26,7 +26,7 @@ import requests
 
 log = logging.getLogger(__name__)
 
-PROJECT = os.environ.get("GCP_PROJECT", "zken-genai")
+PROJECT = os.environ.get("GCP_PROJECT") or ""
 LOCATION = os.environ.get("GCP_LOCATION", "global")
 
 
@@ -37,6 +37,8 @@ def _endpoint(model: str) -> str:
     `aiplatform.googleapis.com`, whereas regional is
     `us-central1-aiplatform.googleapis.com`. Getting this wrong 404s.
     """
+    if not PROJECT:
+        raise RuntimeError("set GCP_PROJECT (the Vertex AI project) in the environment")
     host = (
         "aiplatform.googleapis.com" if LOCATION == "global"
         else f"{LOCATION}-aiplatform.googleapis.com"

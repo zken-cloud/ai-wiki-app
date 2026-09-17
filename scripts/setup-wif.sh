@@ -3,11 +3,8 @@
 # with NO long-lived service-account key.
 #
 # Run once, by someone with resourcemanager/iam admin on the project.
-# (The interactive account used to build this, kenpkzken@gmail.com, could call
-# Vertex but could NOT run `gcloud projects describe` — so this likely needs a
-# project owner/admin to execute.)
 #
-#   ./setup-wif.sh
+#   PROJECT_ID=<PROJECT_ID> ./setup-wif.sh
 #
 # It prints the two values to paste into the ai-wiki-app repo:
 #   GCP_WIF_PROVIDER   -> repo variable or secret
@@ -15,7 +12,7 @@
 
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:-zken-genai}"
+: "${PROJECT_ID:?set PROJECT_ID}"
 POOL="${POOL:-github-pool}"
 PROVIDER="${PROVIDER:-github-provider}"
 SA_NAME="${SA_NAME:-ai-wiki-ci}"
